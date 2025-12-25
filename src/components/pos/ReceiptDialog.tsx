@@ -53,6 +53,28 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
   // Use native bluetooth on Capacitor, web bluetooth on browser
   const bluetooth = isCapacitor ? nativeBluetooth : webBluetooth;
 
+  // Helper to format order data for printReceipt (defined early for auto-print)
+  const formatReceiptData = () => {
+    if (!order) return null;
+    return {
+      orderNumber: order.id.slice(-6).toUpperCase(),
+      cashierName: cashierName || 'Kasir',
+      tableNumber: tableName ? parseInt(tableName) : undefined,
+      items: orderItems.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      })),
+      subtotal: order.subtotal,
+      discount: 0,
+      total: order.total,
+      paymentMethod: order.payment_method || 'cash',
+      amountPaid: receivedAmount || order.total,
+      change: changeAmount || 0,
+      timestamp: new Date(order.created_at),
+    };
+  };
+
   // Auto print when dialog opens
   useEffect(() => {
     const doAutoPrint = async () => {
@@ -234,6 +256,9 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
   const handleBluetoothPrint = async () => {
     if (!order) return;
 
+    const receiptData = formatReceiptData();
+    if (!receiptData) return;
+
     if (isCapacitor) {
       // Native Bluetooth: if we already have a saved printer (manual MAC), printReceipt will connect + print.
       if (!nativeBluetooth.isSupported) {
@@ -257,13 +282,13 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
         }
       }
     } else {
-      // Web Bluetooth
+      // Web Bluetooth - use new printReceipt signature
       if (!webBluetooth.isConnected) {
-        const connected = await webBluetooth.connect();
-        if (!connected) return;
+        toast.info('Silakan hubungkan printer terlebih dahulu');
+        return;
       }
 
-      const success = await webBluetooth.printReceipt(order, orderItems, tableName, cashierName, receivedAmount, changeAmount);
+      const success = await webBluetooth.printReceipt(receiptData);
       
       if (success) {
         setIsPrinted(true);
