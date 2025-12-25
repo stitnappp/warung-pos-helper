@@ -53,7 +53,7 @@ export function useCart() {
   }, []);
 
   const subtotal = cart.reduce((sum, item) => sum + (item.menuItem.price * item.quantity), 0);
-  const tax = subtotal * 0.1;
+  const tax = subtotal * 0;
   const total = subtotal + tax;
 
   return {
