@@ -36,6 +36,33 @@ const loadThermalPrinterPlugin = async (): Promise<any> => {
   }
 };
 
+const getBluetoothSerial = (): any => {
+  if (!Capacitor.isNativePlatform()) return null;
+  return (window as any).bluetoothSerial || null;
+};
+
+const listPairedDevices = async (): Promise<BluetoothDevice[]> => {
+  const bt = getBluetoothSerial();
+  if (!bt || typeof bt.list !== 'function') return [];
+
+  try {
+    const list = await new Promise<any[]>((resolve, reject) => {
+      bt.list(resolve, reject);
+    });
+
+    return (list || [])
+      .map((d: any) => ({
+        name: d.name || d.deviceName || 'Paired Device',
+        address: (d.address || d.id || '').toUpperCase(),
+        id: (d.address || d.id || '').toUpperCase(),
+      }))
+      .filter((d: BluetoothDevice) => !!d.address);
+  } catch (e) {
+    console.warn('[Printer] Failed to list paired devices via BluetoothSerial:', e);
+    return [];
+  }
+};
+
 // Request Bluetooth & Location permissions for Android 12+
 const requestBluetoothPermissions = async (): Promise<boolean> => {
   if (!Capacitor.isNativePlatform()) return true;
@@ -49,33 +76,16 @@ const requestBluetoothPermissions = async (): Promise<boolean> => {
       console.log('[Printer] Permissions granted via plugin');
       return true;
     }
-    
-    // Fallback: Request via Android native cordova permissions plugin
-    if ((window as any).cordova?.plugins?.permissions) {
-      const permissionsPlugin = (window as any).cordova.plugins.permissions;
-      
-      // Android 12+ requires these specific permissions for Bluetooth
-      const permissions = [
-        'android.permission.BLUETOOTH',
-        'android.permission.BLUETOOTH_ADMIN', 
-        'android.permission.BLUETOOTH_SCAN',
-        'android.permission.BLUETOOTH_CONNECT',
-        'android.permission.ACCESS_FINE_LOCATION',
-        'android.permission.ACCESS_COARSE_LOCATION',
-      ];
-      
-      for (const permission of permissions) {
-        await new Promise<void>((resolve) => {
-          permissionsPlugin.requestPermission(
-            permission,
-            (status: any) => {
-              console.log(`[Permission] ${permission}:`, status?.hasPermission ? 'granted' : 'denied');
-              resolve();
-            },
-            () => resolve()
-          );
-        });
-      }
+
+    // Fallback: request via BluetoothSerial plugin (Cordova)
+    const bt = getBluetoothSerial();
+    if (bt && typeof bt.requestPermission === 'function') {
+      await new Promise<void>((resolve) => {
+        bt.requestPermission(
+          () => resolve(),
+          () => resolve()
+        );
+      });
       return true;
     }
     
@@ -229,7 +239,49 @@ export function PrinterSettings() {
     }
   };
 
-  // Scan for devices using capacitor-thermal-printer
+  // Listen for discovered devices once (avoid duplicate listeners)
+  useEffect(() => {
+    if (!isNative) return;
+
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      const plugin = await loadThermalPrinterPlugin();
+      if (!plugin || cancelled) return;
+
+      try {
+        const handle = await plugin.addListener('discoverDevices', (result: { devices: any[] }) => {
+          const mapped = (result.devices || [])
+            .map((d: any) => ({
+              name: d.name || d.deviceName || 'Unknown Device',
+              address: (d.address || d.macAddress || '').toUpperCase(),
+              id: (d.address || d.macAddress || '').toUpperCase(),
+            }))
+            .filter((d: BluetoothDevice) => !!d.address);
+
+          // merge with existing (paired list)
+          setDevices((prev) => {
+            const byId = new Map<string, BluetoothDevice>();
+            for (const p of prev) byId.set(p.id, p);
+            for (const n of mapped) byId.set(n.id, n);
+            return Array.from(byId.values());
+          });
+        });
+
+        cleanup = () => handle?.remove?.();
+      } catch (e) {
+        console.warn('[Printer] Failed to attach discoverDevices listener:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, [isNative]);
+
+  // Scan for devices: show paired devices first, then nearby discovery
   const scanForDevices = async () => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
@@ -241,55 +293,36 @@ export function PrinterSettings() {
     setBluetoothError(null);
 
     try {
-      // Request permissions first (required for Android 12+)
-      console.log('[Printer] Requesting Bluetooth permissions...');
       await requestBluetoothPermissions();
 
+      // 1) Paired devices (this is what users expect after pairing)
+      const paired = await listPairedDevices();
+      if (paired.length > 0) {
+        setDevices(paired);
+      }
+
+      // 2) Nearby discovery (printer must be discoverable to appear here)
       const plugin = await loadThermalPrinterPlugin();
-      if (!plugin) {
-        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
-        setScanning(false);
-        return;
+      if (plugin) {
+        await plugin.startScan();
+        await sleep(5000);
+        if (plugin.stopScan) await plugin.stopScan();
       }
 
-      // Set up listener for discovered devices
-      let discoveredDevices: BluetoothDevice[] = [];
       
-      plugin.addListener('discoverDevices', (result: { devices: any[] }) => {
-        console.log('[Printer] Discovered devices:', result.devices);
-        const mapped = (result.devices || []).map((d: any) => ({
-          name: d.name || d.deviceName || 'Unknown Device',
-          address: d.address || d.macAddress || '',
-          id: d.address || d.macAddress || '',
-        })).filter((d: BluetoothDevice) => d.address);
-        
-        discoveredDevices = mapped;
-        setDevices(mapped);
-      });
-
-      // Start scanning
-      await plugin.startScan();
-      
-      // Wait for devices to be discovered
-      await sleep(5000);
-      
-      // Stop scan
-      if (plugin.stopScan) {
-        await plugin.stopScan();
-      }
-
-      if (discoveredDevices.length === 0) {
-        const errorMsg = 'Tidak ada perangkat ditemukan. Pastikan printer sudah di-pair di Pengaturan → Bluetooth HP, atau gunakan Input Manual MAC Address.';
+      if ((paired.length === 0) && devices.length === 0) {
+        const errorMsg =
+          'Bluetooth tidak menemukan perangkat. Jika printer sudah di-pair tapi tidak muncul, gunakan Input Manual MAC Address atau pastikan printer mode discoverable.';
         setBluetoothError(errorMsg);
         toast.info(errorMsg);
       } else {
-        toast.success(`Ditemukan ${discoveredDevices.length} perangkat Bluetooth`);
+        toast.success('Daftar perangkat diperbarui');
       }
     } catch (error: any) {
       console.error('Error scanning devices:', error);
-      const errorMsg = error?.message || 'Gagal mencari perangkat Bluetooth. Coba gunakan Input Manual MAC Address.';
+      const errorMsg = error?.message || 'Gagal membaca perangkat Bluetooth. Coba lagi.';
       setBluetoothError(errorMsg);
-      toast.error('Gagal mencari perangkat Bluetooth');
+      toast.error('Gagal membaca perangkat Bluetooth');
     } finally {
       setScanning(false);
     }
