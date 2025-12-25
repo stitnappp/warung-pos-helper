@@ -23,10 +23,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Store, ArrowLeft, Plus, Pencil, Trash2, Utensils, 
-  Grid3X3, Loader2, UtensilsCrossed
+  Grid3X3, Loader2, UtensilsCrossed, BarChart3
 } from 'lucide-react';
 import { MenuItem, MenuCategory, RestaurantTable } from '@/types/pos';
 import { toast } from 'sonner';
+import { SalesReport } from '@/components/pos/SalesReport';
 
 export default function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -82,7 +83,7 @@ export default function Admin() {
       {/* Main Content */}
       <main className="container px-4 py-6">
         <Tabs defaultValue="menu" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-3">
+          <TabsList className="grid w-full max-w-lg grid-cols-4">
             <TabsTrigger value="menu" className="gap-2">
               <Utensils className="h-4 w-4" />
               <span className="hidden sm:inline">Menu</span>
@@ -94,6 +95,10 @@ export default function Admin() {
             <TabsTrigger value="tables" className="gap-2">
               <UtensilsCrossed className="h-4 w-4" />
               <span className="hidden sm:inline">Meja</span>
+            </TabsTrigger>
+            <TabsTrigger value="reports" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              <span className="hidden sm:inline">Laporan</span>
             </TabsTrigger>
           </TabsList>
 
@@ -255,6 +260,12 @@ export default function Admin() {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          {/* Reports Tab */}
+          <TabsContent value="reports" className="space-y-4">
+            <h2 className="text-xl font-semibold">Laporan Penjualan</h2>
+            <SalesReport />
           </TabsContent>
         </Tabs>
       </main>
