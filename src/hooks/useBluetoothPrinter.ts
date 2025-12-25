@@ -175,11 +175,9 @@ export function useBluetoothPrinter() {
   }, []);
 
   const formatPrice = (price: number): string => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0,
-    }).format(price);
+    // Use simple ASCII format for thermal printer compatibility
+    const formatted = price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return 'Rp' + formatted;
   };
 
   const padText = (left: string, right: string, width: number = 32): string => {
