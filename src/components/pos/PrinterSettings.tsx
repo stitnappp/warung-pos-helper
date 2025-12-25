@@ -315,42 +315,128 @@ export function PrinterSettings() {
 
   // Request Bluetooth permissions for Android 12+
   const requestBluetoothPermissions = async (): Promise<boolean> => {
+    // Method 1: Try cordova-plugin-android-permissions
     const cordova = (window as any).cordova;
-    if (!cordova?.plugins?.permissions) {
-      // Try alternative method - some devices work without explicit permission request
-      return true;
+    if (cordova?.plugins?.permissions) {
+      const permissions = cordova.plugins.permissions;
+      const requiredPermissions = [
+        'android.permission.BLUETOOTH_CONNECT',
+        'android.permission.BLUETOOTH_SCAN',
+        'android.permission.BLUETOOTH',
+        'android.permission.BLUETOOTH_ADMIN',
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
+      ];
+
+      return new Promise((resolve) => {
+        const requestAllPermissions = () => {
+          permissions.requestPermissions(
+            requiredPermissions,
+            (result: any) => {
+              console.log('[BT] Permission request result:', result);
+              resolve(result.hasPermission !== false);
+            },
+            (err: any) => {
+              console.warn('[BT] Permission request failed:', err);
+              resolve(false);
+            }
+          );
+        };
+
+        // Check if we already have permission
+        permissions.checkPermission(
+          'android.permission.BLUETOOTH_CONNECT',
+          (status: any) => {
+            console.log('[BT] Current permission status:', status);
+            if (status.hasPermission) {
+              resolve(true);
+            } else {
+              requestAllPermissions();
+            }
+          },
+          () => {
+            // If check fails, try requesting anyway
+            requestAllPermissions();
+          }
+        );
+      });
     }
 
-    const permissions = cordova.plugins.permissions;
-    const requiredPermissions = [
-      'android.permission.BLUETOOTH_CONNECT',
-      'android.permission.BLUETOOTH_SCAN',
-    ];
+    // Method 2: Try navigator.permissions API (limited support)
+    if (navigator.permissions) {
+      try {
+        const btStatus = await (navigator.permissions as any).query({ name: 'bluetooth' }).catch(() => null);
+        if (btStatus && btStatus.state === 'granted') {
+          console.log('[BT] Navigator permissions granted');
+          return true;
+        }
+      } catch {
+        console.log('[BT] Navigator permissions API not available for bluetooth');
+      }
+    }
 
-    return new Promise((resolve) => {
-      permissions.checkPermission(
-        requiredPermissions[0],
-        (status: any) => {
-          if (status.hasPermission) {
-            resolve(true);
-          } else {
-            permissions.requestPermissions(
-              requiredPermissions,
-              (result: any) => {
-                resolve(result.hasPermission);
-              },
-              () => {
+    // Method 3: Try BluetoothSerial's own permission check if available
+    const bt = getBluetoothSerial();
+    if (bt) {
+      // Some versions of cordova-plugin-bluetooth-serial have checkPermission
+      if (typeof bt.checkPermission === 'function') {
+        return new Promise((resolve) => {
+          bt.checkPermission(
+            () => {
+              console.log('[BT] BluetoothSerial checkPermission granted');
+              resolve(true);
+            },
+            () => {
+              // Try to request permission
+              if (typeof bt.requestPermission === 'function') {
+                bt.requestPermission(
+                  () => {
+                    console.log('[BT] BluetoothSerial requestPermission granted');
+                    resolve(true);
+                  },
+                  (err: any) => {
+                    console.warn('[BT] BluetoothSerial requestPermission failed:', err);
+                    resolve(false);
+                  }
+                );
+              } else {
                 resolve(false);
               }
-            );
-          }
-        },
-        () => {
-          // If permission check fails, try to proceed anyway
-          resolve(true);
-        }
-      );
-    });
+            }
+          );
+        });
+      }
+
+      // Try enable() which implicitly requests Bluetooth permissions
+      if (typeof bt.isEnabled === 'function' && typeof bt.enable === 'function') {
+        return new Promise((resolve) => {
+          bt.isEnabled(
+            () => {
+              console.log('[BT] Bluetooth already enabled');
+              resolve(true);
+            },
+            () => {
+              console.log('[BT] Bluetooth disabled, trying to enable...');
+              bt.enable(
+                () => {
+                  console.log('[BT] Bluetooth enabled successfully');
+                  resolve(true);
+                },
+                (err: any) => {
+                  console.warn('[BT] Failed to enable Bluetooth:', err);
+                  // Still return true - maybe it's a permission issue that will show during list()
+                  resolve(true);
+                }
+              );
+            }
+          );
+        });
+      }
+    }
+
+    // If no permission API available, assume we can proceed and let the actual BT call fail if needed
+    console.log('[BT] No permission API available, proceeding anyway');
+    return true;
   };
 
   const scanForDevices = async () => {
