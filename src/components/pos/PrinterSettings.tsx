@@ -48,8 +48,96 @@ export function PrinterSettings() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualAddress, setManualAddress] = useState('');
   const [manualName, setManualName] = useState('');
+  const [testPrinting, setTestPrinting] = useState(false);
   
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
+
+  const testPrint = async () => {
+    if (!savedPrinterAddress) {
+      toast.error('Tidak ada printer tersimpan');
+      return;
+    }
+
+    setTestPrinting(true);
+
+    try {
+      if (!BluetoothSerial) {
+        await initBluetoothPlugin();
+      }
+
+      if (!BluetoothSerial) {
+        toast.error('Plugin Bluetooth tidak tersedia');
+        return;
+      }
+
+      // Connect to printer
+      await BluetoothSerial.connect({ address: savedPrinterAddress });
+
+      // ESC/POS Commands
+      const ESC = '\x1B';
+      const GS = '\x1D';
+      const INIT = ESC + '@';
+      const ALIGN_CENTER = ESC + 'a' + '\x01';
+      const ALIGN_LEFT = ESC + 'a' + '\x00';
+      const BOLD_ON = ESC + 'E' + '\x01';
+      const BOLD_OFF = ESC + 'E' + '\x00';
+      const TEXT_DOUBLE = GS + '!' + '\x11';
+      const TEXT_NORMAL = GS + '!' + '\x00';
+      const CUT = GS + 'V' + '\x00';
+      const FEED = '\n';
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+      const timeStr = now.toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      // Build test receipt
+      let printData = INIT;
+      printData += ALIGN_CENTER;
+      printData += TEXT_DOUBLE + BOLD_ON;
+      printData += '*** TEST PRINT ***' + FEED;
+      printData += TEXT_NORMAL + BOLD_OFF;
+      printData += FEED;
+      printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
+      printData += 'MAC: ' + savedPrinterAddress + FEED;
+      printData += FEED;
+      printData += '--------------------------------' + FEED;
+      printData += dateStr + ' ' + timeStr + FEED;
+      printData += '--------------------------------' + FEED;
+      printData += FEED;
+      printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
+      printData += 'Printer siap digunakan.' + FEED;
+      printData += FEED;
+      printData += ALIGN_LEFT;
+      printData += '================================' + FEED;
+      printData += FEED + FEED + FEED;
+      printData += CUT;
+
+      // Send print data
+      await BluetoothSerial.write({ data: printData });
+
+      // Disconnect
+      await BluetoothSerial.disconnect();
+
+      toast.success('Test print berhasil! Cek printer Anda.');
+    } catch (error: any) {
+      console.error('Test print error:', error);
+      toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala'));
+      
+      // Try to disconnect in case of error
+      try {
+        await BluetoothSerial?.disconnect();
+      } catch {}
+    } finally {
+      setTestPrinting(false);
+    }
+  };
 
   useEffect(() => {
     const isNativePlatform = Capacitor.isNativePlatform();
@@ -398,7 +486,7 @@ export function PrinterSettings() {
 
         {/* Current Saved Printer */}
         {savedPrinterAddress && (
-          <div className="bg-accent/20 border border-accent/30 rounded-lg p-4">
+          <div className="bg-accent/20 border border-accent/30 rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-accent/30 flex items-center justify-center">
                 <Check className="h-5 w-5 text-accent" />
@@ -415,6 +503,22 @@ export function PrinterSettings() {
                 className="text-destructive hover:text-destructive"
               >
                 Hapus
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={testPrint}
+                disabled={testPrinting || !isNative}
+                className="flex-1"
+              >
+                {testPrinting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Printer className="h-4 w-4 mr-2" />
+                )}
+                {testPrinting ? 'Mencetak...' : 'Test Print'}
               </Button>
             </div>
           </div>
