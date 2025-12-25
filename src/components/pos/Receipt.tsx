@@ -7,10 +7,11 @@ interface ReceiptProps {
   order: Order;
   items: OrderItem[];
   tableName?: string;
+  cashierName?: string;
 }
 
 export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
-  ({ order, items, tableName }, ref) => {
+  ({ order, items, tableName, cashierName }, ref) => {
     const formatPrice = (price: number) => {
       return new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -59,6 +60,12 @@ export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
             <div className="flex justify-between text-xs">
               <span>Pembayaran:</span>
               <span className="capitalize">{order.payment_method}</span>
+            </div>
+          )}
+          {cashierName && (
+            <div className="flex justify-between text-xs">
+              <span>Kasir:</span>
+              <span>{cashierName}</span>
             </div>
           )}
         </div>
