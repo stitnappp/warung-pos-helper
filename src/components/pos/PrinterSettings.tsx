@@ -25,9 +25,6 @@ const getBluetoothSerial = (): any => {
   return (window as any).bluetoothSerial || null;
 };
 
-export type PrinterDataMode = 'arraybuffer' | 'string';
-export type PrinterPaperSize = '58mm' | '80mm';
-
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
   const [savedPrinterName, setSavedPrinterName] = useState('');
@@ -43,11 +40,6 @@ export function PrinterSettings() {
   const [manualAddress, setManualAddress] = useState('');
   const [manualName, setManualName] = useState('');
   const [testPrinting, setTestPrinting] = useState(false);
-  
-  // Compatibility settings
-  const [dataMode, setDataMode] = useState<PrinterDataMode>('arraybuffer');
-  const [paperSize, setPaperSize] = useState<PrinterPaperSize>('58mm');
-  const [savingSettings, setSavingSettings] = useState(false);
   
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
   const testPrint = async () => {
@@ -219,7 +211,7 @@ export function PrinterSettings() {
         minute: '2-digit',
       });
 
-      const lineWidth = paperSize === '58mm' ? 32 : 48;
+      const lineWidth = 32; // Default 58mm printer
       const separator = '-'.repeat(lineWidth);
       const separator2 = '='.repeat(lineWidth);
 
@@ -231,7 +223,6 @@ export function PrinterSettings() {
       printData += FEED;
       printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
       printData += 'MAC: ' + savedPrinterAddress + FEED;
-      printData += 'Mode: ' + dataMode + ' | Paper: ' + paperSize + FEED;
       printData += FEED;
       printData += separator + FEED;
       printData += dateStr + ' ' + timeStr + FEED;
@@ -292,7 +283,7 @@ export function PrinterSettings() {
       const { data, error } = await supabase
         .from('app_settings')
         .select('key, value')
-        .in('key', ['printer_address', 'printer_name', 'printer_data_mode', 'printer_paper_size']);
+        .in('key', ['printer_address', 'printer_name']);
 
       if (error) throw error;
 
@@ -303,49 +294,12 @@ export function PrinterSettings() {
 
       setSavedPrinterAddress(configMap['printer_address'] || '');
       setSavedPrinterName(configMap['printer_name'] || '');
-      setDataMode((configMap['printer_data_mode'] as PrinterDataMode) || 'arraybuffer');
-      setPaperSize((configMap['printer_paper_size'] as PrinterPaperSize) || '58mm');
     } catch (error) {
       console.error('Error fetching printer config:', error);
     } finally {
       setLoading(false);
     }
   };
-  
-  const saveCompatibilitySetting = async (key: string, value: string) => {
-    setSavingSettings(true);
-    try {
-      const { data: existing } = await supabase
-        .from('app_settings')
-        .select('key')
-        .eq('key', key)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase.from('app_settings').update({ value }).eq('key', key);
-      } else {
-        await supabase.from('app_settings').insert({ key, value, description: `Printer setting: ${key}` });
-      }
-      toast.success('Pengaturan disimpan');
-    } catch (error) {
-      console.error('Error saving setting:', error);
-      toast.error('Gagal menyimpan pengaturan');
-    } finally {
-      setSavingSettings(false);
-    }
-  };
-
-  const handleDataModeChange = async (mode: PrinterDataMode) => {
-    setDataMode(mode);
-    await saveCompatibilitySetting('printer_data_mode', mode);
-  };
-
-  const handlePaperSizeChange = async (size: PrinterPaperSize) => {
-    setPaperSize(size);
-    await saveCompatibilitySetting('printer_paper_size', size);
-  };
-
-  const getLineWidth = () => (paperSize === '58mm' ? 32 : 48);
 
   // Request Bluetooth permissions for Android 12+
   const requestBluetoothPermissions = async (): Promise<boolean> => {
@@ -841,67 +795,6 @@ export function PrinterSettings() {
             Hubungkan printer terlebih dahulu untuk mengaktifkan auto print
           </p>
         )}
-
-        {/* Compatibility Settings */}
-        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border border-border/50">
-          <p className="font-medium text-sm">Pengaturan Kompatibilitas Printer</p>
-          
-          {/* Data Mode */}
-          <div className="space-y-2">
-            <Label className="text-sm">Mode Kirim Data</Label>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={dataMode === 'arraybuffer' ? 'default' : 'outline'}
-                onClick={() => handleDataModeChange('arraybuffer')}
-                disabled={savingSettings}
-                className={dataMode === 'arraybuffer' ? 'gradient-primary' : ''}
-              >
-                ArrayBuffer
-              </Button>
-              <Button
-                size="sm"
-                variant={dataMode === 'string' ? 'default' : 'outline'}
-                onClick={() => handleDataModeChange('string')}
-                disabled={savingSettings}
-                className={dataMode === 'string' ? 'gradient-primary' : ''}
-              >
-                String
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              ArrayBuffer lebih stabil untuk EP58M/RPP02N. Pilih String jika ArrayBuffer tidak mencetak.
-            </p>
-          </div>
-
-          {/* Paper Size */}
-          <div className="space-y-2">
-            <Label className="text-sm">Ukuran Kertas</Label>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={paperSize === '58mm' ? 'default' : 'outline'}
-                onClick={() => handlePaperSizeChange('58mm')}
-                disabled={savingSettings}
-                className={paperSize === '58mm' ? 'gradient-primary' : ''}
-              >
-                58mm (32 karakter)
-              </Button>
-              <Button
-                size="sm"
-                variant={paperSize === '80mm' ? 'default' : 'outline'}
-                onClick={() => handlePaperSizeChange('80mm')}
-                disabled={savingSettings}
-                className={paperSize === '80mm' ? 'gradient-primary' : ''}
-              >
-                80mm (48 karakter)
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Pilih sesuai lebar kertas printer thermal Anda.
-            </p>
-          </div>
-        </div>
 
         {/* Current Saved Printer */}
         {savedPrinterAddress && (
