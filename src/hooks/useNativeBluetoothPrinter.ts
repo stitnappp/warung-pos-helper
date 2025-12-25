@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 import { Order, OrderItem } from '@/types/pos';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
@@ -39,8 +41,8 @@ interface NativeBluetoothState {
 
 const STORAGE_KEY = 'connected_printer';
 
-// Check if running in Capacitor
-const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
+// Check if running in native app
+const isNative = Capacitor.isNativePlatform();
 
 // Get saved printer from localStorage
 const getSavedPrinter = (): BluetoothDevice | null => {
@@ -70,14 +72,14 @@ const savePrinter = (device: BluetoothDevice | null) => {
 
 // Get BluetoothSerial from Cordova plugins (works with Capacitor)
 const getBluetoothSerial = (): any => {
-  if (!isCapacitor) return null;
-  
+  if (!isNative) return null;
+
   // Cordova plugins are available on window
   const bluetoothSerial = (window as any).bluetoothSerial;
   if (bluetoothSerial) {
     return bluetoothSerial;
   }
-  
+
   return null;
 };
 
@@ -93,7 +95,7 @@ export function useNativeBluetoothPrinter() {
       isScanning: false,
     };
   });
-  
+
   const [isSupported, setIsSupported] = useState(false);
 
   // Check if plugin is available
@@ -103,20 +105,72 @@ export function useNativeBluetoothPrinter() {
       if (bt) {
         setIsSupported(true);
         console.log('[NativeBluetooth] Cordova BluetoothSerial plugin available');
-      } else if (isCapacitor) {
+      } else if (isNative) {
         // Plugin might load later, check again
         const timer = setTimeout(checkSupport, 1000);
         return () => clearTimeout(timer);
       }
     };
-    
-    if (isCapacitor) {
+
+    if (isNative) {
       // Wait for device ready
       document.addEventListener('deviceready', checkSupport, false);
       // Also check immediately in case device is already ready
       checkSupport();
     }
   }, []);
+
+  // Fallback: load saved printer from backend settings (manual MAC input)
+  useEffect(() => {
+    if (!isNative) return;
+
+    // If already available (localStorage), don't override
+    if (getSavedPrinter() || state.connectedDevice) return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_settings')
+          .select('key, value')
+          .in('key', ['printer_address', 'printer_name']);
+
+        if (error) throw error;
+
+        const map: Record<string, string> = {};
+        data?.forEach((item) => {
+          map[item.key] = item.value || '';
+        });
+
+        const address = (map['printer_address'] || '').trim();
+        const name = (map['printer_name'] || 'Printer').trim() || 'Printer';
+
+        if (!address) return;
+
+        const device: BluetoothDevice = {
+          name,
+          address: address.toUpperCase(),
+          id: address.toUpperCase(),
+        };
+
+        savePrinter(device);
+
+        if (!cancelled) {
+          setState((prev) => ({ ...prev, connectedDevice: device }));
+        }
+      } catch (e) {
+        // Non-blocking: still allow user to scan/connect manually
+        console.debug('[NativeBluetooth] Failed to load printer from backend settings:', e);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.connectedDevice]);
 
   const scanDevices = useCallback(async () => {
     const bt = getBluetoothSerial();

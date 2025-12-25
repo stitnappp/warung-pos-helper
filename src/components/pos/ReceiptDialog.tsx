@@ -14,6 +14,7 @@ import { useBluetoothPrinter } from '@/hooks/useBluetoothPrinter';
 import { useNativeBluetoothPrinter } from '@/hooks/useNativeBluetoothPrinter';
 import { useCurrentUserProfile } from '@/hooks/useUserProfile';
 import { useAutoPrint } from '@/hooks/useAutoPrint';
+import { Capacitor } from '@capacitor/core';
 import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff, CheckCircle, Share2, Download, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -27,8 +28,8 @@ interface ReceiptDialogProps {
   changeAmount?: number;
 }
 
-// Detect if running in Capacitor (Android)
-const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
+// Detect if running in native app
+const isCapacitor = Capacitor.isNativePlatform();
 
 export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedAmount, changeAmount }: ReceiptDialogProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
@@ -63,7 +64,8 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
         !hasAutoPrinted &&
         !isLoading &&
         isCapacitor &&
-        nativeBluetooth.isConnected
+        nativeBluetooth.isSupported &&
+        nativeBluetooth.connectedDevice
       ) {
         setHasAutoPrinted(true);
         toast.info('Mencetak struk otomatis...');
@@ -88,7 +90,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
     };
 
     doAutoPrint();
-  }, [open, order, orderItems, autoPrintEnabled, hasAutoPrinted, isLoading, nativeBluetooth.isConnected]);
+  }, [open, order, orderItems, autoPrintEnabled, hasAutoPrinted, isLoading, nativeBluetooth.isSupported, nativeBluetooth.connectedDevice]);
 
   // Reset hasAutoPrinted when dialog closes
   useEffect(() => {
@@ -233,8 +235,13 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
     if (!order) return;
 
     if (isCapacitor) {
-      // Native Capacitor Bluetooth
-      if (!nativeBluetooth.isConnected) {
+      // Native Bluetooth: if we already have a saved printer (manual MAC), printReceipt will connect + print.
+      if (!nativeBluetooth.isSupported) {
+        toast.error('Plugin Bluetooth tidak tersedia. Pastikan aplikasi Android sudah di-build dengan plugin printer.');
+        return;
+      }
+
+      if (!nativeBluetooth.connectedDevice) {
         // Show device list to connect first
         handleScanDevices();
         return;
