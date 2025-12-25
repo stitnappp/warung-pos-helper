@@ -27,9 +27,10 @@ export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
       >
         {/* Header */}
         <div className="text-center border-b border-dashed border-gray-400 pb-4 mb-4">
-          <h1 className="text-xl font-bold">WARUNG POS</h1>
-          <p className="text-xs text-gray-600 mt-1">Jl. Contoh No. 123</p>
-          <p className="text-xs text-gray-600">Telp: 021-1234567</p>
+          <h1 className="text-xl font-bold">RM MINANG MAIMBAOE</h1>
+          <p className="text-xs text-gray-600 mt-1">Jln. Gatot Subroto no 10</p>
+          <p className="text-xs text-gray-600">depan balai desa Losari Kidul</p>
+          <p className="text-xs text-gray-600">Kec Losari Kab Cirebon</p>
         </div>
 
         {/* Order Info */}
