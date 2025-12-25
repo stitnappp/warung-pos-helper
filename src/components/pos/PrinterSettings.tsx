@@ -95,7 +95,7 @@ const requestBluetoothPermissions = async (): Promise<boolean> => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const withTimeout = async <T,>(promise: Promise<T>, ms: number, message: string) => {
+const withTimeout = async <T,>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
   let timeoutId: number | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
@@ -108,16 +108,19 @@ const withTimeout = async <T,>(promise: Promise<T>, ms: number, message: string)
   }
 };
 
-const connectToPrinterAddress = async (address: string) => {
+const connectToPrinterAddress = async (address: string): Promise<{ name: string; address: string } | null> => {
   const plugin = await loadThermalPrinterPlugin();
   if (!plugin) throw new Error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
 
   // connect() sometimes hangs on some Android builds; enforce a timeout so UI doesn't get stuck.
-  await withTimeout(
-    plugin.connect({ address, type: 'bluetooth' }),
+  // NOTE: The official API only accepts { address: string }, NOT { type: 'bluetooth' }
+  const result = await withTimeout<{ name: string; address: string } | null>(
+    plugin.connect({ address }),
     12000,
     'Timeout koneksi printer. Pastikan izin "Perangkat di sekitar" aktif dan printer menyala.'
   );
+  
+  return result;
 };
 
 interface DiagnosticInfo {
