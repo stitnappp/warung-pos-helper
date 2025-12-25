@@ -1,12 +1,14 @@
+import { useState } from 'react';
 import { Order } from '@/types/pos';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ClipboardList, Clock, CheckCircle, XCircle, ChefHat, Truck } from 'lucide-react';
+import { ClipboardList, Clock, CheckCircle, XCircle, ChefHat, Truck, Printer } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { ReceiptDialog } from './ReceiptDialog';
 
 interface OrdersListProps {
   orders: Order[];
@@ -30,6 +32,8 @@ const nextStatus: Record<Order['status'], Order['status'] | null> = {
 };
 
 export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
@@ -140,7 +144,7 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
                 const StatusIcon = config.icon;
 
                 return (
-                  <Card key={order.id} className="opacity-60">
+                  <Card key={order.id} className="opacity-80 hover:opacity-100 transition-opacity">
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
                         <div>
@@ -161,7 +165,19 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
                       </div>
                     </CardHeader>
                     <CardContent className="pt-0">
-                      <span className="font-medium">{formatPrice(order.total)}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{formatPrice(order.total)}</span>
+                        {order.status === 'completed' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setReceiptOrder(order)}
+                          >
+                            <Printer className="h-3 w-3 mr-1" />
+                            Cetak
+                          </Button>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 );
@@ -177,6 +193,13 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
           )}
         </div>
       </ScrollArea>
+
+      {/* Receipt Dialog */}
+      <ReceiptDialog
+        open={!!receiptOrder}
+        onClose={() => setReceiptOrder(null)}
+        order={receiptOrder}
+      />
     </div>
   );
 }
