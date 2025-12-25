@@ -290,6 +290,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bootstrap_user_role: {
+        Args: never
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
