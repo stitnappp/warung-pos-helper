@@ -18,20 +18,10 @@ interface BluetoothDevice {
   class?: number;
 }
 
-// Get BluetoothSerial plugin
-let BluetoothSerial: any = null;
-
-const initBluetoothPlugin = async () => {
+// Get BluetoothSerial from Cordova plugin (works with Capacitor)
+const getBluetoothSerial = (): any => {
   if (!Capacitor.isNativePlatform()) return null;
-  
-  try {
-    const { registerPlugin } = await import('@capacitor/core');
-    BluetoothSerial = registerPlugin('BluetoothSerial');
-    return BluetoothSerial;
-  } catch (error) {
-    console.error('Failed to init Bluetooth plugin:', error);
-    return null;
-  }
+  return (window as any).bluetoothSerial || null;
 };
 
 export function PrinterSettings() {
@@ -58,83 +48,100 @@ export function PrinterSettings() {
       return;
     }
 
+    if (!isNative) {
+      toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      return;
+    }
+
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.');
+      return;
+    }
+
     setTestPrinting(true);
 
+    // ESC/POS Commands
+    const ESC = '\x1B';
+    const GS = '\x1D';
+    const INIT = ESC + '@';
+    const ALIGN_CENTER = ESC + 'a' + '\x01';
+    const ALIGN_LEFT = ESC + 'a' + '\x00';
+    const BOLD_ON = ESC + 'E' + '\x01';
+    const BOLD_OFF = ESC + 'E' + '\x00';
+    const TEXT_DOUBLE = GS + '!' + '\x11';
+    const TEXT_NORMAL = GS + '!' + '\x00';
+    const CUT = GS + 'V' + '\x00';
+    const FEED = '\n';
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const timeStr = now.toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Build test receipt
+    let printData = INIT;
+    printData += ALIGN_CENTER;
+    printData += TEXT_DOUBLE + BOLD_ON;
+    printData += '*** TEST PRINT ***' + FEED;
+    printData += TEXT_NORMAL + BOLD_OFF;
+    printData += FEED;
+    printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
+    printData += 'MAC: ' + savedPrinterAddress + FEED;
+    printData += FEED;
+    printData += '--------------------------------' + FEED;
+    printData += dateStr + ' ' + timeStr + FEED;
+    printData += '--------------------------------' + FEED;
+    printData += FEED;
+    printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
+    printData += 'Printer siap digunakan.' + FEED;
+    printData += FEED;
+    printData += ALIGN_LEFT;
+    printData += '================================' + FEED;
+    printData += FEED + FEED + FEED;
+    printData += CUT;
+
+    const safeDisconnect = () => {
+      try {
+        bt.disconnect(() => {}, () => {});
+      } catch {}
+    };
+
     try {
-      if (!BluetoothSerial) {
-        await initBluetoothPlugin();
-      }
-
-      if (!BluetoothSerial) {
-        toast.error('Plugin Bluetooth tidak tersedia');
-        return;
-      }
-
-      // Connect to printer
-      await BluetoothSerial.connect({ address: savedPrinterAddress });
-
-      // ESC/POS Commands
-      const ESC = '\x1B';
-      const GS = '\x1D';
-      const INIT = ESC + '@';
-      const ALIGN_CENTER = ESC + 'a' + '\x01';
-      const ALIGN_LEFT = ESC + 'a' + '\x00';
-      const BOLD_ON = ESC + 'E' + '\x01';
-      const BOLD_OFF = ESC + 'E' + '\x00';
-      const TEXT_DOUBLE = GS + '!' + '\x11';
-      const TEXT_NORMAL = GS + '!' + '\x00';
-      const CUT = GS + 'V' + '\x00';
-      const FEED = '\n';
-
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
-      const timeStr = now.toLocaleTimeString('id-ID', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-
-      // Build test receipt
-      let printData = INIT;
-      printData += ALIGN_CENTER;
-      printData += TEXT_DOUBLE + BOLD_ON;
-      printData += '*** TEST PRINT ***' + FEED;
-      printData += TEXT_NORMAL + BOLD_OFF;
-      printData += FEED;
-      printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
-      printData += 'MAC: ' + savedPrinterAddress + FEED;
-      printData += FEED;
-      printData += '--------------------------------' + FEED;
-      printData += dateStr + ' ' + timeStr + FEED;
-      printData += '--------------------------------' + FEED;
-      printData += FEED;
-      printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
-      printData += 'Printer siap digunakan.' + FEED;
-      printData += FEED;
-      printData += ALIGN_LEFT;
-      printData += '================================' + FEED;
-      printData += FEED + FEED + FEED;
-      printData += CUT;
-
-      // Send print data
-      await BluetoothSerial.write({ data: printData });
-
-      // Disconnect
-      await BluetoothSerial.disconnect();
-
-      toast.success('Test print berhasil! Cek printer Anda.');
+      bt.connect(
+        savedPrinterAddress,
+        () => {
+          bt.write(
+            printData,
+            () => {
+              safeDisconnect();
+              toast.success('Test print berhasil! Cek printer Anda.');
+              setTestPrinting(false);
+            },
+            (writeError: any) => {
+              console.error('Test print write error:', writeError);
+              safeDisconnect();
+              toast.error('Gagal test print: gagal mengirim data ke printer');
+              setTestPrinting(false);
+            }
+          );
+        },
+        (connectError: any) => {
+          console.error('Test print connect error:', connectError);
+          toast.error('Gagal test print: gagal terhubung ke printer');
+          setTestPrinting(false);
+        }
+      );
     } catch (error: any) {
       console.error('Test print error:', error);
+      safeDisconnect();
       toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala'));
-      
-      // Try to disconnect in case of error
-      try {
-        await BluetoothSerial?.disconnect();
-      } catch {}
-    } finally {
       setTestPrinting(false);
     }
   };
@@ -142,11 +149,6 @@ export function PrinterSettings() {
   useEffect(() => {
     const isNativePlatform = Capacitor.isNativePlatform();
     setIsNative(isNativePlatform);
-    
-    if (isNativePlatform) {
-      initBluetoothPlugin();
-    }
-    
     fetchSavedPrinter();
   }, []);
 
@@ -179,161 +181,121 @@ export function PrinterSettings() {
       return;
     }
 
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      const errorMsg = 'Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.';
+      setBluetoothError(errorMsg);
+      toast.error(errorMsg);
+      return;
+    }
+
     setScanning(true);
     setDevices([]);
     setBluetoothError(null);
 
-    try {
-      // Ensure plugin is initialized
-      if (!BluetoothSerial) {
-        await initBluetoothPlugin();
-      }
-      
-      if (!BluetoothSerial) {
-        const errorMsg = 'Plugin BluetoothSerial tidak tersedia. Pastikan aplikasi sudah di-build dengan plugin yang benar.';
-        setBluetoothError(errorMsg);
-        toast.error(errorMsg);
-        setScanning(false);
-        return;
-      }
+    const onList = (deviceList: any[]) => {
+      const allDevices: BluetoothDevice[] = (deviceList || []).map((d: any) => ({
+        name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
+        address: d.address || d.macAddress || d.id || d.uuid || d.deviceId,
+        id: d.id || d.uuid || d.address || d.macAddress || d.deviceId,
+        class: d.class || d.deviceClass,
+      }));
 
-      console.log('BluetoothSerial plugin available:', Object.keys(BluetoothSerial));
+      const validDevices = allDevices.filter((d) => d.address && d.address.length > 0);
+      setDevices(validDevices);
 
-      // Check if Bluetooth is enabled
-      try {
-        const enabledResult = await BluetoothSerial.isEnabled();
-        console.log('Bluetooth enabled check:', enabledResult);
-        
-        if (!enabledResult?.enabled && enabledResult !== true) {
-          // Try to enable Bluetooth
-          try {
-            await BluetoothSerial.enable();
-            toast.info('Mengaktifkan Bluetooth...');
-            // Wait a bit for Bluetooth to enable
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          } catch (enableError) {
-            console.error('Enable error:', enableError);
-            const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
-            setBluetoothError(errorMsg);
-            toast.error(errorMsg);
-            setScanning(false);
-            return;
-          }
-        }
-      } catch (checkError) {
-        console.error('Error checking Bluetooth status:', checkError);
-        // Continue anyway, some plugins don't have isEnabled
-      }
-
-      // Try multiple methods to get paired devices
-      let deviceList: any[] = [];
-      
-      // Method 1: Try list() - most common
-      try {
-        console.log('Trying BluetoothSerial.list()...');
-        const listResult = await BluetoothSerial.list();
-        console.log('list() result:', JSON.stringify(listResult));
-        
-        if (listResult?.devices) {
-          deviceList = listResult.devices;
-        } else if (Array.isArray(listResult)) {
-          deviceList = listResult;
-        }
-      } catch (listError) {
-        console.log('list() failed:', listError);
-      }
-
-      // Method 2: Try getBondedDevices() if list() didn't work
-      if (deviceList.length === 0) {
-        try {
-          console.log('Trying BluetoothSerial.getBondedDevices()...');
-          const bondedResult = await BluetoothSerial.getBondedDevices();
-          console.log('getBondedDevices() result:', JSON.stringify(bondedResult));
-          
-          if (bondedResult?.devices) {
-            deviceList = bondedResult.devices;
-          } else if (Array.isArray(bondedResult)) {
-            deviceList = bondedResult;
-          }
-        } catch (bondedError) {
-          console.log('getBondedDevices() failed:', bondedError);
-        }
-      }
-
-      // Method 3: Try getPairedDevices() as last resort
-      if (deviceList.length === 0) {
-        try {
-          console.log('Trying BluetoothSerial.getPairedDevices()...');
-          const pairedResult = await BluetoothSerial.getPairedDevices();
-          console.log('getPairedDevices() result:', JSON.stringify(pairedResult));
-          
-          if (pairedResult?.devices) {
-            deviceList = pairedResult.devices;
-          } else if (Array.isArray(pairedResult)) {
-            deviceList = pairedResult;
-          }
-        } catch (pairedError) {
-          console.log('getPairedDevices() failed:', pairedError);
-        }
-      }
-
-      console.log('Final device list:', deviceList);
-
-      if (deviceList.length > 0) {
-        const allDevices: BluetoothDevice[] = deviceList.map((d: any) => ({
-          name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
-          address: d.address || d.macAddress || d.id || d.uuid || d.deviceId,
-          id: d.id || d.uuid || d.address || d.macAddress || d.deviceId,
-          class: d.class || d.deviceClass,
-        }));
-
-        // Filter out devices without valid address
-        const validDevices = allDevices.filter(d => d.address && d.address.length > 0);
-        
-        setDevices(validDevices);
+      if (validDevices.length > 0) {
         toast.success(`Ditemukan ${validDevices.length} perangkat Bluetooth`);
       } else {
         const errorMsg = 'Tidak ada perangkat Bluetooth yang di-pair. Pair printer terlebih dahulu di Pengaturan → Bluetooth HP.';
         setBluetoothError(errorMsg);
         toast.info(errorMsg);
       }
-    } catch (error: any) {
-      console.error('Error scanning devices:', error);
-      const errorMsg = error?.message || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
+
+      setScanning(false);
+    };
+
+    const onFail = (err: any) => {
+      console.error('Error scanning devices:', err);
+      const errorMsg = (typeof err === 'string' ? err : err?.message) || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
       setBluetoothError(errorMsg);
       toast.error('Gagal mencari perangkat Bluetooth');
-    } finally {
       setScanning(false);
+    };
+
+    try {
+      bt.isEnabled(
+        () => {
+          bt.list(onList, onFail);
+        },
+        () => {
+          bt.enable(
+            () => {
+              toast.info('Mengaktifkan Bluetooth...');
+              setTimeout(() => bt.list(onList, onFail), 800);
+            },
+            () => {
+              const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
+              setBluetoothError(errorMsg);
+              toast.error(errorMsg);
+              setScanning(false);
+            }
+          );
+        }
+      );
+    } catch (e) {
+      onFail(e);
     }
   };
 
   const connectToDevice = async (device: BluetoothDevice) => {
+    if (!isNative) {
+      toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      return;
+    }
+
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.');
+      return;
+    }
+
     setConnecting(true);
     setSelectedDevice(device);
 
     try {
-      const { registerPlugin } = await import('@capacitor/core');
-      const BluetoothSerial = registerPlugin<any>('BluetoothSerial');
+      bt.connect(
+        device.address,
+        () => {
+          toast.success(`Berhasil terhubung ke ${device.name}`);
 
-      if (!BluetoothSerial) {
-        toast.error('Plugin Bluetooth tidak tersedia');
-        return;
-      }
-
-      // Try to connect to verify the device is a printer
-      await BluetoothSerial.connect({ address: device.address });
-      
-      toast.success(`Berhasil terhubung ke ${device.name}`);
-
-      // Disconnect after test
-      await BluetoothSerial.disconnect();
-
-      // Save the printer
-      await savePrinter(device);
+          // Disconnect after test
+          bt.disconnect(
+            () => {
+              savePrinter(device).finally(() => {
+                setConnecting(false);
+                setSelectedDevice(null);
+              });
+            },
+            () => {
+              // even if disconnect fails, still save
+              savePrinter(device).finally(() => {
+                setConnecting(false);
+                setSelectedDevice(null);
+              });
+            }
+          );
+        },
+        (error: any) => {
+          console.error('Error connecting to device:', error);
+          toast.error(`Gagal terhubung ke ${device.name}. Pastikan printer menyala dan dalam jangkauan.`);
+          setConnecting(false);
+          setSelectedDevice(null);
+        }
+      );
     } catch (error) {
       console.error('Error connecting to device:', error);
       toast.error(`Gagal terhubung ke ${device.name}. Pastikan printer menyala dan dalam jangkauan.`);
-    } finally {
       setConnecting(false);
       setSelectedDevice(null);
     }
