@@ -68,19 +68,38 @@ export function MidtransSettings() {
 
     try {
       const updates = [
-        { key: 'midtrans_merchant_id', value: config.merchantId },
-        { key: 'midtrans_client_key', value: config.clientKey },
-        { key: 'midtrans_server_key', value: config.serverKey },
-        { key: 'midtrans_environment', value: config.environment },
+        { key: 'midtrans_merchant_id', value: config.merchantId, description: 'Midtrans merchant ID' },
+        { key: 'midtrans_client_key', value: config.clientKey, description: 'Midtrans client key (publishable)' },
+        { key: 'midtrans_server_key', value: config.serverKey, description: 'Midtrans server key (secret)' },
+        { key: 'midtrans_environment', value: config.environment, description: 'Midtrans environment (sandbox/production)' },
       ];
 
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('app_settings')
-          .update({ value: update.value })
-          .eq('key', update.key);
+      // Ensure settings rows exist; update-only would silently do nothing when row is missing.
+      const { data: existing, error: existingError } = await supabase
+        .from('app_settings')
+        .select('key')
+        .in(
+          'key',
+          updates.map((u) => u.key)
+        );
 
-        if (error) throw error;
+      if (existingError) throw existingError;
+
+      const existingKeys = new Set((existing || []).map((e) => e.key));
+
+      for (const update of updates) {
+        if (existingKeys.has(update.key)) {
+          const { error } = await supabase
+            .from('app_settings')
+            .update({ value: update.value })
+            .eq('key', update.key);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase
+            .from('app_settings')
+            .insert({ key: update.key, value: update.value, description: update.description });
+          if (error) throw error;
+        }
       }
 
       toast.success('Konfigurasi Midtrans berhasil disimpan!');
