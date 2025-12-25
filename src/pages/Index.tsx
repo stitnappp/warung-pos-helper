@@ -10,11 +10,13 @@ import { MenuGrid } from '@/components/pos/MenuGrid';
 import { Cart } from '@/components/pos/Cart';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { OrdersList } from '@/components/pos/OrdersList';
+import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Store, Settings, LogOut, Menu, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
+import { Order } from '@/types/pos';
 
 export default function Index() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -41,6 +43,7 @@ export default function Index() {
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   if (authLoading) {
     return (
@@ -66,9 +69,11 @@ export default function Index() {
     customerName?: string;
     paymentMethod: string;
     notes?: string;
+    receivedAmount?: number;
+    changeAmount?: number;
   }) => {
     try {
-      await createOrder.mutateAsync({
+      const order = await createOrder.mutateAsync({
         cart,
         tableId: data.tableId,
         customerName: data.customerName,
@@ -77,6 +82,18 @@ export default function Index() {
       });
       clearCart();
       setCheckoutOpen(false);
+      
+      // Automatically open receipt dialog for printing
+      if (order) {
+        const formattedOrder: Order = {
+          ...order,
+          subtotal: Number(order.subtotal),
+          tax: Number(order.tax),
+          total: Number(order.total),
+          status: order.status as Order['status'],
+        };
+        setReceiptOrder(formattedOrder);
+      }
     } catch (error) {
       // Error already handled by mutation
     }
@@ -211,7 +228,12 @@ export default function Index() {
         isProcessing={createOrder.isPending}
       />
 
-      {/* Mobile Cart FAB */}
+      {/* Receipt Dialog - Auto opens after checkout */}
+      <ReceiptDialog
+        open={!!receiptOrder}
+        onClose={() => setReceiptOrder(null)}
+        order={receiptOrder}
+      />
       {cart.length > 0 && !mobileMenuOpen && (
         <div className="fixed bottom-4 right-4 lg:hidden">
           <Button
