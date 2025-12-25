@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,11 +23,38 @@ serve(async (req) => {
 
   try {
     const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN');
-    const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-      console.error('[Telegram] Missing bot token or chat ID');
-      throw new Error('Telegram configuration is missing');
+    if (!TELEGRAM_BOT_TOKEN) {
+      console.error('[Telegram] Missing bot token');
+      throw new Error('Telegram bot token is missing');
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[Telegram] Missing Supabase credentials');
+      throw new Error('Supabase configuration is missing');
+    }
+
+    // Get chat ID from database
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const { data: settingData, error: settingError } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'telegram_chat_id')
+      .maybeSingle();
+
+    if (settingError) {
+      console.error('[Telegram] Error fetching chat ID from database:', settingError);
+      throw new Error('Failed to fetch Telegram chat ID');
+    }
+
+    // Fallback to env variable if database value is empty
+    const TELEGRAM_CHAT_ID = settingData?.value || Deno.env.get('TELEGRAM_CHAT_ID');
+
+    if (!TELEGRAM_CHAT_ID) {
+      console.error('[Telegram] Chat ID not configured');
+      throw new Error('Telegram Chat ID is not configured. Please set it in Admin settings.');
     }
 
     const { order } = await req.json() as { order: OrderNotification };
