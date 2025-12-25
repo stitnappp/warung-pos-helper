@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,7 @@ import { Order } from '@/types/pos';
 import { useOrderItems } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
 import { useBluetoothPrinter } from '@/hooks/useBluetoothPrinter';
-import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff, CheckCircle } from 'lucide-react';
+import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff, CheckCircle, Share2, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -28,10 +29,114 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
   const { data: tables = [] } = useTables();
   const bluetooth = useBluetoothPrinter();
   const [isPrinted, setIsPrinted] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const tableName = order?.table_id 
     ? tables.find(t => t.id === order.table_id)?.table_number 
     : undefined;
+
+  // Check if native share is available (mobile apps)
+  const canShare = typeof navigator !== 'undefined' && 'share' in navigator && 'canShare' in navigator;
+
+  const captureReceiptAsImage = async (): Promise<Blob | null> => {
+    if (!receiptRef.current) return null;
+    
+    try {
+      const canvas = await html2canvas(receiptRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+      
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+          resolve(blob);
+        }, 'image/png', 1.0);
+      });
+    } catch (error) {
+      console.error('Error capturing receipt:', error);
+      return null;
+    }
+  };
+
+  const handleShareReceipt = async () => {
+    if (!order) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const blob = await captureReceiptAsImage();
+      
+      if (!blob) {
+        toast.error('Gagal membuat gambar struk');
+        return;
+      }
+      
+      const file = new File([blob], `struk-${order.id.slice(-6).toUpperCase()}.png`, {
+        type: 'image/png',
+      });
+      
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Struk #${order.id.slice(-6).toUpperCase()}`,
+          text: `Struk pesanan #${order.id.slice(-6).toUpperCase()} - Total: Rp ${order.total.toLocaleString('id-ID')}`,
+        });
+        
+        setIsPrinted(true);
+        if (onCompleteOrder) {
+          onCompleteOrder(order.id);
+        }
+        toast.success('Struk berhasil dibagikan!');
+      } else {
+        // Fallback to download if share is not available
+        handleDownloadReceipt();
+      }
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error('Share error:', error);
+        toast.error('Gagal membagikan struk');
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDownloadReceipt = async () => {
+    if (!order) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const blob = await captureReceiptAsImage();
+      
+      if (!blob) {
+        toast.error('Gagal membuat gambar struk');
+        return;
+      }
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `struk-${order.id.slice(-6).toUpperCase()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      setIsPrinted(true);
+      if (onCompleteOrder) {
+        onCompleteOrder(order.id);
+      }
+      toast.success('Struk berhasil diunduh!');
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error('Gagal mengunduh struk');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleBrowserPrint = () => {
     if (!receiptRef.current) return;
@@ -147,7 +252,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {isPrinted ? (
@@ -166,7 +271,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
               Memuat data...
             </div>
           ) : (
-            <div className="border rounded-lg overflow-hidden shadow-sm max-h-[50vh] overflow-y-auto">
+            <div className="border rounded-lg overflow-hidden shadow-sm max-h-[40vh] overflow-y-auto bg-white">
               <Receipt
                 ref={receiptRef}
                 order={order}
@@ -181,7 +286,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
         {isPrinted && (
           <div className="bg-accent/20 text-accent-foreground p-3 rounded-lg text-center mb-2">
             <CheckCircle className="h-6 w-6 mx-auto mb-1 text-accent" />
-            <p className="text-sm font-medium">Struk berhasil dicetak</p>
+            <p className="text-sm font-medium">Struk berhasil dicetak/dibagikan</p>
             <p className="text-xs text-muted-foreground">Pesanan telah ditandai selesai</p>
           </div>
         )}
@@ -216,49 +321,78 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
           </div>
         )}
 
-        <div className="flex gap-2 justify-end flex-wrap">
+        <div className="flex flex-col gap-2">
           {isPrinted ? (
-            <Button onClick={handleClose} className="gradient-primary">
+            <Button onClick={handleClose} className="gradient-primary w-full">
               <CheckCircle className="h-4 w-4 mr-2" />
               Selesai
             </Button>
           ) : (
             <>
-              <Button variant="outline" onClick={handleClose}>
+              {/* Primary Action: Share (for mobile) or Download */}
+              {canShare ? (
+                <Button 
+                  onClick={handleShareReceipt} 
+                  disabled={isLoading || isProcessing}
+                  className="gradient-primary w-full"
+                >
+                  {isProcessing ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Share2 className="h-4 w-4 mr-2" />
+                  )}
+                  Bagikan / Cetak ke Printer
+                </Button>
+              ) : (
+                <Button 
+                  onClick={handleDownloadReceipt} 
+                  disabled={isLoading || isProcessing}
+                  className="gradient-primary w-full"
+                >
+                  {isProcessing ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  Unduh Gambar Struk
+                </Button>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                {/* Browser Print */}
+                <Button onClick={handleBrowserPrint} disabled={isLoading} variant="secondary">
+                  <Printer className="h-4 w-4 mr-2" />
+                  Cetak Browser
+                </Button>
+
+                {/* Bluetooth Print */}
+                {bluetooth.isSupported && (
+                  <Button 
+                    onClick={handleBluetoothPrint} 
+                    disabled={isLoading || bluetooth.isPrinting || bluetooth.isConnecting} 
+                    variant="secondary"
+                    className={cn(
+                      bluetooth.isConnected && "ring-2 ring-accent ring-offset-1"
+                    )}
+                  >
+                    {bluetooth.isPrinting || bluetooth.isConnecting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Bluetooth className="h-4 w-4 mr-2" />
+                    )}
+                    {bluetooth.isConnecting 
+                      ? 'Connecting...' 
+                      : bluetooth.isPrinting 
+                        ? 'Mencetak...'
+                        : 'Thermal'}
+                  </Button>
+                )}
+              </div>
+              
+              <Button variant="ghost" onClick={handleClose} className="w-full">
                 <X className="h-4 w-4 mr-2" />
                 Tutup
               </Button>
-              
-              {/* Browser Print */}
-              <Button onClick={handleBrowserPrint} disabled={isLoading} variant="secondary">
-                <Printer className="h-4 w-4 mr-2" />
-                Cetak Browser
-              </Button>
-
-              {/* Bluetooth Print */}
-              {bluetooth.isSupported && (
-                <Button 
-                  onClick={handleBluetoothPrint} 
-                  disabled={isLoading || bluetooth.isPrinting || bluetooth.isConnecting} 
-                  className={cn(
-                    "gradient-primary",
-                    bluetooth.isConnected && "ring-2 ring-accent ring-offset-2"
-                  )}
-                >
-                  {bluetooth.isPrinting || bluetooth.isConnecting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Bluetooth className="h-4 w-4 mr-2" />
-                  )}
-                  {bluetooth.isConnecting 
-                    ? 'Connecting...' 
-                    : bluetooth.isPrinting 
-                      ? 'Mencetak...'
-                      : bluetooth.isConnected 
-                        ? 'Cetak Thermal'
-                        : 'Hubungkan Printer'}
-                </Button>
-              )}
             </>
           )}
         </div>
