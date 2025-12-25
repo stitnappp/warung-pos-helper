@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
+import { useAutoPrint } from '@/hooks/useAutoPrint';
 
 interface BluetoothDevice {
   name: string;
@@ -40,6 +43,8 @@ export function PrinterSettings() {
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
   const [bluetoothError, setBluetoothError] = useState<string | null>(null);
+  
+  const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
 
   useEffect(() => {
     const isNativePlatform = Capacitor.isNativePlatform();
@@ -335,6 +340,37 @@ export function PrinterSettings() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Auto Print Toggle */}
+        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border/50">
+          <div className="space-y-0.5">
+            <Label htmlFor="auto-print" className="text-base font-medium">
+              Auto Print Struk
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Otomatis cetak struk saat checkout selesai
+            </p>
+          </div>
+          <Switch
+            id="auto-print"
+            checked={autoPrintEnabled}
+            onCheckedChange={async (checked) => {
+              const success = await toggleAutoPrint(checked);
+              if (success) {
+                toast.success(checked ? 'Auto print diaktifkan' : 'Auto print dinonaktifkan');
+              } else {
+                toast.error('Gagal menyimpan pengaturan');
+              }
+            }}
+            disabled={autoPrintLoading || !savedPrinterAddress}
+          />
+        </div>
+
+        {!savedPrinterAddress && (
+          <p className="text-sm text-muted-foreground text-center">
+            Hubungkan printer terlebih dahulu untuk mengaktifkan auto print
+          </p>
+        )}
+
         {/* Current Saved Printer */}
         {savedPrinterAddress && (
           <div className="bg-accent/20 border border-accent/30 rounded-lg p-4">
