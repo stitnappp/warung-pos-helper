@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserRole } from '@/hooks/useUserRole';
-import { useIsAdmin } from '@/hooks/useUserRole';
 import { useMenuItems, useMenuCategories } from '@/hooks/useMenuItems';
 import { useOrders, useCreateOrder, useUpdateOrderStatus } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
@@ -18,15 +17,15 @@ import { PrinterSettings } from '@/components/pos/PrinterSettings';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
-import { Store, Settings, LogOut, Menu, X, LayoutDashboard, Printer, Loader2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Store, LogOut, Menu, X, Printer, Loader2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { Order } from '@/types/pos';
+import { useUserProfile } from '@/hooks/useUserProfile';
 
-export default function Index() {
+export default function Kasir() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { data: role, isLoading: roleLoading } = useUserRole();
-  const { isAdmin } = useIsAdmin();
+  const { data: profile } = useUserProfile();
   const { data: menuItems = [], isLoading: itemsLoading } = useMenuItems();
   const { data: categories = [], isLoading: categoriesLoading } = useMenuCategories();
   const { data: orders = [], isLoading: ordersLoading } = useOrders();
@@ -34,7 +33,6 @@ export default function Index() {
   const createOrder = useCreateOrder();
   const updateOrderStatus = useUpdateOrderStatus();
   
-  // Enable realtime notifications for new orders
   useOrderNotifications();
   
   const {
@@ -65,9 +63,9 @@ export default function Index() {
     return <Navigate to="/auth" replace />;
   }
 
-  // Redirect kasir users to their dedicated page
-  if (role === 'kasir') {
-    return <Navigate to="/kasir" replace />;
+  // Only kasir role can access this page, admin should use main index
+  if (role === 'admin') {
+    return <Navigate to="/" replace />;
   }
 
   const isLoading = itemsLoading || categoriesLoading || ordersLoading;
@@ -91,7 +89,6 @@ export default function Index() {
       clearCart();
       setCheckoutOpen(false);
       
-      // Automatically open receipt dialog for printing
       if (order) {
         const formattedOrder: Order = {
           ...order,
@@ -107,7 +104,7 @@ export default function Index() {
         });
       }
     } catch (error) {
-      // Error already handled by mutation
+      // Error handled by mutation
     }
   };
 
@@ -127,17 +124,18 @@ export default function Index() {
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
               <Store className="h-4 w-4 text-primary-foreground" />
             </div>
-            <h1 className="font-bold text-lg hidden sm:block">Warung POS</h1>
+            <div>
+              <h1 className="font-bold text-lg hidden sm:block">Warung POS</h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">Kasir Mode</p>
+            </div>
           </div>
           
           <div className="flex items-center gap-2">
-            {isAdmin && (
-              <Button variant="ghost" size="icon" asChild title="Dashboard Admin">
-                <Link to="/admin-dashboard">
-                  <LayoutDashboard className="h-4 w-4" />
-                </Link>
-              </Button>
-            )}
+            {/* User Info */}
+            <div className="hidden md:flex items-center gap-2 mr-2 text-sm text-muted-foreground">
+              <User className="h-4 w-4" />
+              <span>{profile?.full_name || user.email}</span>
+            </div>
             
             {/* Printer Settings Sheet */}
             <Sheet>
@@ -156,12 +154,7 @@ export default function Index() {
               </SheetContent>
             </Sheet>
             
-            <Button variant="ghost" size="icon" asChild>
-              <Link to="/admin">
-                <Settings className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button variant="ghost" size="icon" onClick={handleSignOut}>
+            <Button variant="ghost" size="icon" onClick={handleSignOut} title="Keluar">
               <LogOut className="h-4 w-4" />
             </Button>
             <Button
@@ -265,7 +258,7 @@ export default function Index() {
         isProcessing={createOrder.isPending}
       />
 
-      {/* Receipt Dialog - Auto opens after checkout */}
+      {/* Receipt Dialog */}
       <ReceiptDialog
         open={!!receiptOrder}
         onClose={() => {
