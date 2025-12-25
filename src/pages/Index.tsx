@@ -233,6 +233,7 @@ export default function Index() {
         open={!!receiptOrder}
         onClose={() => setReceiptOrder(null)}
         order={receiptOrder}
+        onCompleteOrder={(orderId) => updateOrderStatus.mutate({ orderId, status: 'completed' })}
       />
       {cart.length > 0 && !mobileMenuOpen && (
         <div className="fixed bottom-4 right-4 lg:hidden">
