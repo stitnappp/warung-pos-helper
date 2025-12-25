@@ -448,33 +448,47 @@ export function useNativeBluetoothPrinter() {
           data.push(...COMMANDS.FEED_LINE);
           data.push(...COMMANDS.CUT_PAPER);
 
-          // Convert to Uint8Array for arraybuffer mode, or string
+          // Convert to ArrayBuffer for arraybuffer mode, or string (safe fallback)
           const uint8Array = new Uint8Array(data);
-          const sendData = state.dataMode === 'arraybuffer' ? uint8Array.buffer : new TextDecoder().decode(uint8Array);
-
-          // Send to printer
-          bt.write(
-            sendData,
-            () => {
-              console.log('[NativeBluetooth] Print successful');
-              toast.success('Struk berhasil dicetak!');
-              
-              // Disconnect after printing
-              bt.disconnect(
-                () => console.log('[NativeBluetooth] Disconnected after print'),
-                () => {}
-              );
-              
-              setState(prev => ({ ...prev, isPrinting: false }));
-              resolve(true);
-            },
-            (error: any) => {
-              console.error('[NativeBluetooth] Write error:', error);
-              toast.error(`Gagal mencetak: ${error || 'Unknown error'}`);
-              setState(prev => ({ ...prev, isPrinting: false }));
-              resolve(false);
+          let sendData: any = uint8Array.buffer;
+          if (state.dataMode === 'string') {
+            try {
+              if (typeof TextDecoder === 'undefined') {
+                // Fallback to ArrayBuffer if TextDecoder isn't available
+                sendData = uint8Array.buffer;
+              } else {
+                sendData = new TextDecoder().decode(uint8Array);
+              }
+            } catch {
+              sendData = uint8Array.buffer;
             }
-          );
+          }
+
+           // Send to printer (small delay helps some devices avoid crashing)
+           setTimeout(() => {
+             bt.write(
+               sendData,
+               () => {
+                 console.log('[NativeBluetooth] Print successful');
+                 toast.success('Struk berhasil dicetak!');
+                 
+                 // Disconnect after printing
+                 bt.disconnect(
+                   () => console.log('[NativeBluetooth] Disconnected after print'),
+                   () => {}
+                 );
+                 
+                 setState(prev => ({ ...prev, isPrinting: false }));
+                 resolve(true);
+               },
+               (error: any) => {
+                 console.error('[NativeBluetooth] Write error:', error);
+                 toast.error(`Gagal mencetak: ${error || 'Unknown error'}`);
+                 setState(prev => ({ ...prev, isPrinting: false }));
+                 resolve(false);
+               }
+             );
+           }, 250);
         },
         (error: any) => {
           console.error('[NativeBluetooth] Connect for print error:', error);

@@ -125,9 +125,23 @@ export function PrinterSettings() {
       printData += CUT;
 
       // Data to send: either ArrayBuffer or string based on settings
-      const sendData = dataMode === 'arraybuffer' 
-        ? new TextEncoder().encode(printData).buffer 
-        : printData;
+      const buildSendData = (): any => {
+        if (dataMode === 'string') return printData;
+
+        // arraybuffer mode (with safe fallback)
+        try {
+          if (typeof TextEncoder === 'undefined') {
+            // Some Android WebViews don't ship TextEncoder; fallback to string to avoid crash
+            return printData;
+          }
+          const bytes = new TextEncoder().encode(printData);
+          return bytes.buffer;
+        } catch {
+          return printData;
+        }
+      };
+
+      const sendData = buildSendData();
 
       const connectPrinter = (): Promise<void> =>
         new Promise((resolve, reject) => {
@@ -173,6 +187,8 @@ export function PrinterSettings() {
         });
 
       await connectPrinter();
+      // Give the socket a moment to settle (prevents some devices from crashing on immediate write)
+      await new Promise((r) => setTimeout(r, 250));
       await writeToPrinter();
       await disconnectPrinter();
 
