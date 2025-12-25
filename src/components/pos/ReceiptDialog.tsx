@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { useTables } from '@/hooks/useTables';
 import { useBluetoothPrinter } from '@/hooks/useBluetoothPrinter';
 import { useNativeBluetoothPrinter } from '@/hooks/useNativeBluetoothPrinter';
 import { useCurrentUserProfile } from '@/hooks/useUserProfile';
+import { useAutoPrint } from '@/hooks/useAutoPrint';
 import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff, CheckCircle, Share2, Download, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -36,9 +37,11 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
   const { data: currentUserProfile } = useCurrentUserProfile();
   const webBluetooth = useBluetoothPrinter();
   const nativeBluetooth = useNativeBluetoothPrinter();
+  const { autoPrintEnabled } = useAutoPrint();
   const [isPrinted, setIsPrinted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showDeviceList, setShowDeviceList] = useState(false);
+  const [hasAutoPrinted, setHasAutoPrinted] = useState(false);
 
   const tableName = order?.table_id 
     ? tables.find(t => t.id === order.table_id)?.table_number 
@@ -48,6 +51,51 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
 
   // Use native bluetooth on Capacitor, web bluetooth on browser
   const bluetooth = isCapacitor ? nativeBluetooth : webBluetooth;
+
+  // Auto print when dialog opens
+  useEffect(() => {
+    const doAutoPrint = async () => {
+      if (
+        open && 
+        order && 
+        orderItems.length > 0 && 
+        autoPrintEnabled && 
+        !hasAutoPrinted &&
+        !isLoading &&
+        isCapacitor &&
+        nativeBluetooth.isConnected
+      ) {
+        setHasAutoPrinted(true);
+        toast.info('Mencetak struk otomatis...');
+        
+        const success = await nativeBluetooth.printReceipt(
+          order, 
+          orderItems, 
+          tableName, 
+          cashierName, 
+          receivedAmount, 
+          changeAmount
+        );
+        
+        if (success) {
+          setIsPrinted(true);
+          if (onCompleteOrder) {
+            onCompleteOrder(order.id);
+          }
+          toast.success('Struk berhasil dicetak!');
+        }
+      }
+    };
+
+    doAutoPrint();
+  }, [open, order, orderItems, autoPrintEnabled, hasAutoPrinted, isLoading, nativeBluetooth.isConnected]);
+
+  // Reset hasAutoPrinted when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setHasAutoPrinted(false);
+    }
+  }, [open]);
 
   const generateReceiptImage = async (): Promise<Blob | null> => {
     if (!receiptRef.current) return null;
