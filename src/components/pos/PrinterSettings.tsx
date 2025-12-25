@@ -63,19 +63,139 @@ export function PrinterSettings() {
 
     setTestPrinting(true);
 
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Plugin Bluetooth belum siap. Pastikan sudah run: npx cap sync android');
+      setTestPrinting(false);
+      return;
+    }
+
+    if (typeof bt.connect !== 'function' || typeof bt.write !== 'function') {
+      toast.error('Plugin Bluetooth tidak lengkap. Rebuild aplikasi diperlukan.');
+      setTestPrinting(false);
+      return;
+    }
+
+    // Helper to safely check if connected
+    const isConnected = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        try {
+          if (typeof bt.isConnected !== 'function') {
+            resolve(false);
+            return;
+          }
+          bt.isConnected(
+            () => resolve(true),
+            () => resolve(false)
+          );
+        } catch {
+          resolve(false);
+        }
+      });
+
+    // Helper to safely disconnect
+    const safeDisconnect = (): Promise<void> =>
+      new Promise((resolve) => {
+        try {
+          if (typeof bt.disconnect !== 'function') {
+            resolve();
+            return;
+          }
+          bt.disconnect(
+            () => resolve(),
+            () => resolve()
+          );
+        } catch {
+          resolve();
+        }
+      });
+
+    // Helper to connect with timeout
+    const connectWithTimeout = (address: string, timeoutMs: number = 10000): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error('Koneksi timeout'));
+          }
+        }, timeoutMs);
+
+        try {
+          bt.connect(
+            address,
+            () => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                resolve();
+              }
+            },
+            (err: any) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
+              }
+            }
+          );
+        } catch (e: any) {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(e);
+          }
+        }
+      });
+
+    // Helper to write with timeout
+    const writeWithTimeout = (data: any, timeoutMs: number = 5000): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error('Write timeout'));
+          }
+        }, timeoutMs);
+
+        try {
+          bt.write(
+            data,
+            () => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                resolve();
+              }
+            },
+            (err: any) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal menulis'));
+              }
+            }
+          );
+        } catch (e: any) {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(e);
+          }
+        }
+      });
+
     try {
-      const bt = getBluetoothSerial();
-      if (!bt) {
-        toast.error('Plugin Bluetooth belum siap. Pastikan sudah run: npx cap sync android');
-        return;
+      // Check if already connected, disconnect first if so
+      const alreadyConnected = await isConnected();
+      if (alreadyConnected) {
+        await safeDisconnect();
+        // Wait a moment after disconnect
+        await new Promise((r) => setTimeout(r, 500));
       }
 
-      if (typeof bt.connect !== 'function' || typeof bt.write !== 'function') {
-        toast.error('Plugin Bluetooth tidak lengkap. Rebuild aplikasi diperlukan.');
-        return;
-      }
-
-      // ESC/POS Commands (string-based for composing, converted to bytes at the end)
+      // ESC/POS Commands
       const ESC = '\x1B';
       const GS = '\x1D';
       const INIT = ESC + '@';
@@ -125,77 +245,36 @@ export function PrinterSettings() {
       printData += FEED + FEED + FEED;
       printData += CUT;
 
-      // Data to send: either ArrayBuffer or string based on settings
-      const buildSendData = (): any => {
-        if (dataMode === 'string') return printData;
+      // Build send data - always use string for maximum compatibility
+      // ArrayBuffer can cause crashes on some Android devices
+      const sendData = printData;
 
-        // arraybuffer mode (with safe fallback)
-        try {
-          if (typeof TextEncoder === 'undefined') {
-            // Some Android WebViews don't ship TextEncoder; fallback to string to avoid crash
-            return printData;
-          }
-          const bytes = new TextEncoder().encode(printData);
-          return bytes.buffer;
-        } catch {
-          return printData;
-        }
-      };
+      // Connect to printer
+      await connectWithTimeout(savedPrinterAddress, 10000);
 
-      const sendData = buildSendData();
+      // Wait for connection to stabilize
+      await new Promise((r) => setTimeout(r, 500));
 
-      const connectPrinter = (): Promise<void> =>
-        new Promise((resolve, reject) => {
-          try {
-            // Clean stale connection first
-            if (typeof bt.disconnect === 'function') {
-              bt.disconnect(() => {}, () => {});
-            }
-            bt.connect(
-              savedPrinterAddress,
-              () => resolve(),
-              (err: any) => reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'))
-            );
-          } catch (e) {
-            reject(e);
-          }
-        });
+      // Verify connection before writing
+      const connected = await isConnected();
+      if (!connected) {
+        throw new Error('Koneksi terputus sebelum print');
+      }
 
-      const writeToPrinter = (): Promise<void> =>
-        new Promise((resolve, reject) => {
-          try {
-            bt.write(
-              sendData,
-              () => resolve(),
-              (err: any) => reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal menulis'))
-            );
-          } catch (e) {
-            reject(e);
-          }
-        });
+      // Write data
+      await writeWithTimeout(sendData, 5000);
 
-      const disconnectPrinter = (): Promise<void> =>
-        new Promise((resolve) => {
-          try {
-            if (typeof bt.disconnect === 'function') {
-              bt.disconnect(() => resolve(), () => resolve());
-            } else {
-              resolve();
-            }
-          } catch {
-            resolve();
-          }
-        });
+      // Wait a moment before disconnect
+      await new Promise((r) => setTimeout(r, 300));
 
-      await connectPrinter();
-      // Give the socket a moment to settle (prevents some devices from crashing on immediate write)
-      await new Promise((r) => setTimeout(r, 250));
-      await writeToPrinter();
-      await disconnectPrinter();
+      // Disconnect
+      await safeDisconnect();
 
       toast.success('Test print berhasil! Cek printer Anda.');
     } catch (error: any) {
       console.error('Test print error:', error);
+      // Try to disconnect on error
+      await safeDisconnect().catch(() => {});
       toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala dan dalam jangkauan'));
     } finally {
       setTestPrinting(false);
