@@ -37,6 +37,8 @@ interface NativeBluetoothState {
   connectedDevice: BluetoothDevice | null;
   devices: BluetoothDevice[];
   isScanning: boolean;
+  dataMode: 'arraybuffer' | 'string';
+  paperSize: '58mm' | '80mm';
 }
 
 const STORAGE_KEY = 'connected_printer';
@@ -93,6 +95,8 @@ export function useNativeBluetoothPrinter() {
       connectedDevice: savedPrinter,
       devices: [],
       isScanning: false,
+      dataMode: 'arraybuffer' as const,
+      paperSize: '58mm' as const,
     };
   });
 
@@ -120,12 +124,9 @@ export function useNativeBluetoothPrinter() {
     }
   }, []);
 
-  // Fallback: load saved printer from backend settings (manual MAC input)
+  // Fallback: load saved printer + compatibility settings from backend
   useEffect(() => {
     if (!isNative) return;
-
-    // If already available (localStorage), don't override
-    if (getSavedPrinter() || state.connectedDevice) return;
 
     let cancelled = false;
 
@@ -134,7 +135,7 @@ export function useNativeBluetoothPrinter() {
         const { data, error } = await supabase
           .from('app_settings')
           .select('key, value')
-          .in('key', ['printer_address', 'printer_name']);
+          .in('key', ['printer_address', 'printer_name', 'printer_data_mode', 'printer_paper_size']);
 
         if (error) throw error;
 
@@ -145,23 +146,25 @@ export function useNativeBluetoothPrinter() {
 
         const address = (map['printer_address'] || '').trim();
         const name = (map['printer_name'] || 'Printer').trim() || 'Printer';
-
-        if (!address) return;
-
-        const device: BluetoothDevice = {
-          name,
-          address: address.toUpperCase(),
-          id: address.toUpperCase(),
-        };
-
-        savePrinter(device);
+        const dataMode = (map['printer_data_mode'] || 'arraybuffer') as 'arraybuffer' | 'string';
+        const paperSize = (map['printer_paper_size'] || '58mm') as '58mm' | '80mm';
 
         if (!cancelled) {
-          setState((prev) => ({ ...prev, connectedDevice: device }));
+          setState((prev) => ({
+            ...prev,
+            dataMode,
+            paperSize,
+            connectedDevice: address
+              ? { name, address: address.toUpperCase(), id: address.toUpperCase() }
+              : prev.connectedDevice,
+          }));
+
+          if (address && !getSavedPrinter()) {
+            savePrinter({ name, address: address.toUpperCase(), id: address.toUpperCase() });
+          }
         }
       } catch (e) {
-        // Non-blocking: still allow user to scan/connect manually
-        console.debug('[NativeBluetooth] Failed to load printer from backend settings:', e);
+        console.debug('[NativeBluetooth] Failed to load settings from backend:', e);
       }
     };
 
@@ -170,7 +173,7 @@ export function useNativeBluetoothPrinter() {
     return () => {
       cancelled = true;
     };
-  }, [state.connectedDevice]);
+  }, []);
 
   const scanDevices = useCallback(async () => {
     const bt = getBluetoothSerial();
@@ -309,8 +312,11 @@ export function useNativeBluetoothPrinter() {
     return 'Rp' + formatted;
   };
 
-  const padText = (left: string, right: string, width: number = 32): string => {
-    const spaces = width - left.length - right.length;
+  const getLineWidth = () => (state.paperSize === '58mm' ? 32 : 48);
+
+  const padText = (left: string, right: string, width?: number): string => {
+    const w = width ?? getLineWidth();
+    const spaces = w - left.length - right.length;
     return left + ' '.repeat(Math.max(1, spaces)) + right;
   };
 
@@ -345,7 +351,8 @@ export function useNativeBluetoothPrinter() {
           
           const data: number[] = [];
           const LINE = '\n';
-          const SEPARATOR = '--------------------------------';
+          const lineWidth = getLineWidth();
+          const SEPARATOR = '-'.repeat(lineWidth);
 
           // Initialize printer
           data.push(...COMMANDS.INIT);
@@ -441,12 +448,13 @@ export function useNativeBluetoothPrinter() {
           data.push(...COMMANDS.FEED_LINE);
           data.push(...COMMANDS.CUT_PAPER);
 
-          // Convert to Uint8Array
+          // Convert to Uint8Array for arraybuffer mode, or string
           const uint8Array = new Uint8Array(data);
+          const sendData = state.dataMode === 'arraybuffer' ? uint8Array.buffer : new TextDecoder().decode(uint8Array);
 
           // Send to printer
           bt.write(
-            uint8Array.buffer,
+            sendData,
             () => {
               console.log('[NativeBluetooth] Print successful');
               toast.success('Struk berhasil dicetak!');
@@ -476,7 +484,7 @@ export function useNativeBluetoothPrinter() {
         }
       );
     });
-  }, [state.connectedDevice, textToBytes]);
+  }, [state.connectedDevice, state.dataMode, state.paperSize, textToBytes, getLineWidth]);
 
   return {
     ...state,
