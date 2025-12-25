@@ -103,9 +103,19 @@
     @apply border-border;
   }
 
+  html {
+    /* Safe area for notch and navigation bar */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Plus Jakarta Sans', sans-serif;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 }
 
@@ -116,5 +126,13 @@
   
   .gradient-primary {
     @apply bg-gradient-to-r from-primary to-primary/80;
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 }
