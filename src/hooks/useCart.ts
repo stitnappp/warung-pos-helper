@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { CartItem, MenuItem } from '@/types/pos';
-import { toast } from 'sonner';
 
 export function useCart() {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -17,7 +16,6 @@ export function useCart() {
       }
       return [...prev, { menuItem, quantity: 1 }];
     });
-    toast.success(`${menuItem.name} ditambahkan ke keranjang`);
   }, []);
 
   const removeFromCart = useCallback((menuItemId: string) => {
