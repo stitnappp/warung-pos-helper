@@ -78,11 +78,15 @@ export function PrinterSettings() {
         return;
       }
 
-      // Connect to printer
+      // Connect to printer with Bluetooth Classic type
       console.log('[Printer] Connecting to:', savedPrinterAddress);
-      const connectResult = await plugin.connect({ address: savedPrinterAddress });
-      
-      if (connectResult === null) {
+      try {
+        await plugin.connect({ 
+          address: savedPrinterAddress,
+          type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
+        });
+      } catch (connectError: any) {
+        console.error('[Printer] Connect error:', connectError);
         toast.error('Gagal terhubung ke printer. Pastikan printer menyala dan dalam jangkauan.');
         setTestPrinting(false);
         return;
@@ -260,11 +264,10 @@ export function PrinterSettings() {
 
       console.log('[PrinterSettings] Connecting to:', address);
 
-      const connectResult = await plugin.connect({ address });
-      
-      if (connectResult === null) {
-        throw new Error('Gagal terhubung ke printer');
-      }
+      await plugin.connect({ 
+        address,
+        type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
+      });
 
       await sleep(500);
 
@@ -401,11 +404,10 @@ export function PrinterSettings() {
         return;
       }
 
-      const connectResult = await plugin.connect({ address });
-      
-      if (connectResult === null) {
-        throw new Error('Gagal terhubung ke printer');
-      }
+      await plugin.connect({ 
+        address,
+        type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
+      });
 
       await sleep(500);
 
