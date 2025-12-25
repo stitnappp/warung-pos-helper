@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Order } from '@/types/pos';
+import { Order, OrderItem } from '@/types/pos';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ClipboardList, Clock, CheckCircle, XCircle, ChefHat, Truck, Printer } from 'lucide-react';
+import { ClipboardList, Clock, CheckCircle, XCircle, ChefHat, Truck, Printer, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { ReceiptDialog } from './ReceiptDialog';
+import { useOrderItems } from '@/hooks/useOrders';
 
 interface OrdersListProps {
   orders: Order[];
@@ -31,8 +32,49 @@ const nextStatus: Record<Order['status'], Order['status'] | null> = {
   cancelled: null,
 };
 
+function OrderItemsList({ orderId }: { orderId: string }) {
+  const { data: items = [], isLoading } = useOrderItems(orderId);
+
+  if (isLoading) {
+    return <p className="text-xs text-muted-foreground">Memuat item...</p>;
+  }
+
+  if (items.length === 0) {
+    return <p className="text-xs text-muted-foreground">Tidak ada item</p>;
+  }
+
+  return (
+    <ul className="space-y-1 text-sm">
+      {items.map((item) => (
+        <li key={item.id} className="flex justify-between items-start">
+          <div className="flex-1">
+            <span className="font-medium">{item.quantity}x</span>{' '}
+            <span>{item.name}</span>
+            {item.notes && (
+              <p className="text-xs text-muted-foreground ml-4">• {item.notes}</p>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (orderId: string) => {
+    setExpandedOrders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderId)) {
+        newSet.delete(orderId);
+      } else {
+        newSet.add(orderId);
+      }
+      return newSet;
+    });
+  };
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -65,6 +107,7 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
                 const config = statusConfig[order.status];
                 const StatusIcon = config.icon;
                 const next = nextStatus[order.status];
+                const isExpanded = expandedOrders.has(order.id);
 
                 return (
                   <Card 
@@ -99,7 +142,38 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
                         </Badge>
                       </div>
                     </CardHeader>
-                    <CardContent className="pt-2">
+                    <CardContent className="pt-2 space-y-3">
+                      {/* Toggle Button to show items */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-between text-muted-foreground hover:text-foreground"
+                        onClick={() => toggleExpand(order.id)}
+                      >
+                        <span className="text-xs">Detail Item</span>
+                        {isExpanded ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      {/* Order Items */}
+                      {isExpanded && (
+                        <div className="bg-muted/50 rounded-md p-3 animate-fade-in">
+                          <OrderItemsList orderId={order.id} />
+                        </div>
+                      )}
+
+                      {/* Notes */}
+                      {order.notes && (
+                        <div className="bg-muted/30 rounded-md p-2">
+                          <p className="text-xs text-muted-foreground">
+                            <span className="font-medium">Catatan:</span> {order.notes}
+                          </p>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-primary">
                           {formatPrice(order.total)}
@@ -142,6 +216,7 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
               {completedOrders.slice(0, 10).map(order => {
                 const config = statusConfig[order.status];
                 const StatusIcon = config.icon;
+                const isExpanded = expandedOrders.has(order.id);
 
                 return (
                   <Card key={order.id} className="opacity-80 hover:opacity-100 transition-opacity">
@@ -164,7 +239,29 @@ export function OrdersList({ orders, onUpdateStatus }: OrdersListProps) {
                         </Badge>
                       </div>
                     </CardHeader>
-                    <CardContent className="pt-0">
+                    <CardContent className="pt-0 space-y-2">
+                      {/* Toggle Button to show items */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-between text-muted-foreground hover:text-foreground"
+                        onClick={() => toggleExpand(order.id)}
+                      >
+                        <span className="text-xs">Detail Item</span>
+                        {isExpanded ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      {/* Order Items */}
+                      {isExpanded && (
+                        <div className="bg-muted/50 rounded-md p-3 animate-fade-in">
+                          <OrderItemsList orderId={order.id} />
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{formatPrice(order.total)}</span>
                         {order.status === 'completed' && (
