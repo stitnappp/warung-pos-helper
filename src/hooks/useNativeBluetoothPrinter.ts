@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { Order, OrderItem } from '@/types/pos';
 import { format } from 'date-fns';
@@ -40,20 +40,24 @@ interface NativeBluetoothState {
 // Check if running in Capacitor
 const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
 
-// Dynamic import for Capacitor plugin
+// BluetoothSerial plugin reference - will be loaded dynamically on native
 let BluetoothSerial: any = null;
 
-const loadBluetoothSerial = async () => {
+// Try to get the plugin from Capacitor Plugins registry (native only)
+const getBluetoothSerial = () => {
   if (!isCapacitor) return null;
   
   try {
-    const module = await import('capacitor-bluetooth-serial');
-    BluetoothSerial = module.BluetoothSerial;
-    return BluetoothSerial;
+    // On native, the plugin should be available on window.Capacitor.Plugins
+    const Capacitor = (window as any).Capacitor;
+    if (Capacitor?.Plugins?.BluetoothSerial) {
+      BluetoothSerial = Capacitor.Plugins.BluetoothSerial;
+      return BluetoothSerial;
+    }
   } catch (error) {
-    console.error('[NativeBluetooth] Failed to load BluetoothSerial:', error);
-    return null;
+    console.error('[NativeBluetooth] Failed to get BluetoothSerial:', error);
   }
+  return null;
 };
 
 export function useNativeBluetoothPrinter() {
@@ -66,50 +70,28 @@ export function useNativeBluetoothPrinter() {
     isScanning: false,
   });
 
-  const [isSupported, setIsSupported] = useState(false);
-
-  useEffect(() => {
-    const init = async () => {
-      if (isCapacitor) {
-        const bt = await loadBluetoothSerial();
-        setIsSupported(!!bt);
-        
-        if (bt) {
-          // Check if Bluetooth is enabled
-          try {
-            const { enabled } = await bt.isEnabled();
-            if (!enabled) {
-              console.log('[NativeBluetooth] Bluetooth is disabled');
-            }
-          } catch (error) {
-            console.error('[NativeBluetooth] Error checking Bluetooth:', error);
-          }
-        }
-      }
-    };
-    init();
-  }, []);
+  // On web builds, this will always be false
+  // On native builds with the plugin installed, it will be true
+  const isSupported = isCapacitor && !!getBluetoothSerial();
 
   const scanDevices = useCallback(async () => {
-    if (!BluetoothSerial) {
-      const bt = await loadBluetoothSerial();
-      if (!bt) {
-        toast.error('Bluetooth tidak tersedia');
-        return [];
-      }
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Bluetooth tidak tersedia di platform ini');
+      return [];
     }
 
     setState(prev => ({ ...prev, isScanning: true }));
 
     try {
       // Request enable if not enabled
-      const { enabled } = await BluetoothSerial.isEnabled();
+      const { enabled } = await bt.isEnabled();
       if (!enabled) {
-        await BluetoothSerial.enable();
+        await bt.enable();
       }
 
       // Get paired devices
-      const { devices: pairedDevices } = await BluetoothSerial.getPairedDevices();
+      const { devices: pairedDevices } = await bt.getPairedDevices();
       console.log('[NativeBluetooth] Paired devices:', pairedDevices);
 
       setState(prev => ({ 
@@ -128,19 +110,17 @@ export function useNativeBluetoothPrinter() {
   }, []);
 
   const connect = useCallback(async (device: BluetoothDevice) => {
-    if (!BluetoothSerial) {
-      const bt = await loadBluetoothSerial();
-      if (!bt) {
-        toast.error('Bluetooth tidak tersedia');
-        return false;
-      }
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Bluetooth tidak tersedia');
+      return false;
     }
 
     setState(prev => ({ ...prev, isConnecting: true }));
 
     try {
       // Connect to device
-      await BluetoothSerial.connect({ address: device.address });
+      await bt.connect({ address: device.address });
       
       console.log('[NativeBluetooth] Connected to:', device.name);
 
@@ -162,10 +142,11 @@ export function useNativeBluetoothPrinter() {
   }, []);
 
   const disconnect = useCallback(async () => {
-    if (!BluetoothSerial) return;
+    const bt = getBluetoothSerial();
+    if (!bt) return;
 
     try {
-      await BluetoothSerial.disconnect();
+      await bt.disconnect();
       
       setState(prev => ({
         ...prev,
@@ -202,12 +183,10 @@ export function useNativeBluetoothPrinter() {
     receivedAmount?: number,
     changeAmount?: number
   ) => {
-    if (!BluetoothSerial) {
-      const bt = await loadBluetoothSerial();
-      if (!bt) {
-        toast.error('Bluetooth tidak tersedia');
-        return false;
-      }
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Bluetooth tidak tersedia');
+      return false;
     }
 
     if (!state.isConnected) {
@@ -321,7 +300,7 @@ export function useNativeBluetoothPrinter() {
       const base64Data = btoa(String.fromCharCode(...uint8Array));
 
       // Send to printer
-      await BluetoothSerial.write({ value: base64Data });
+      await bt.write({ value: base64Data });
 
       toast.success('Struk berhasil dicetak!');
       setState(prev => ({ ...prev, isPrinting: false }));
