@@ -39,9 +39,9 @@ export function useUserRole() {
 }
 
 export function useIsAdmin() {
-  const { data: role, isLoading } = useUserRole();
+  const { data: role, isLoading, isPending } = useUserRole();
   return {
     isAdmin: role === 'admin',
-    isLoading,
+    isLoading: isLoading || isPending, // Account for disabled state when user isn't ready yet
   };
 }
