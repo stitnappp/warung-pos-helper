@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -19,23 +19,24 @@ interface BluetoothDevice {
   type?: string;
 }
 
-// Get BluetoothSerial from Cordova plugin (works with Capacitor)
-const getBluetoothSerial = (): any => {
-  if (!Capacitor.isNativePlatform()) return null;
-  return (window as any).bluetoothSerial || null;
+// Dynamic import for capacitor-thermal-printer (more stable than cordova plugin)
+let ThermalPrinterPlugin: any = null;
+
+const loadThermalPrinterPlugin = async (): Promise<any> => {
+  if (ThermalPrinterPlugin) return ThermalPrinterPlugin;
+  
+  try {
+    const module = await import('capacitor-thermal-printer');
+    ThermalPrinterPlugin = module.CapacitorThermalPrinter;
+    console.log('[Printer] Capacitor Thermal Printer plugin loaded');
+    return ThermalPrinterPlugin;
+  } catch (e) {
+    console.error('[Printer] Failed to load thermal printer plugin:', e);
+    return null;
+  }
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// Some devices load Cordova plugins a bit late; retry a few times before giving up.
-const waitForBluetoothSerial = async (maxTries: number = 8): Promise<any | null> => {
-  for (let i = 0; i < maxTries; i++) {
-    const bt = getBluetoothSerial();
-    if (bt) return bt;
-    await sleep(350);
-  }
-  return null;
-};
 
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
@@ -54,6 +55,8 @@ export function PrinterSettings() {
   const [testPrinting, setTestPrinting] = useState(false);
   
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
+
+  // Test print using capacitor-thermal-printer (more stable)
   const testPrint = async () => {
     if (!savedPrinterAddress) {
       toast.error('Tidak ada printer tersimpan');
@@ -67,151 +70,28 @@ export function PrinterSettings() {
 
     setTestPrinting(true);
 
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth belum siap. Pastikan sudah run: npx cap sync android');
-      setTestPrinting(false);
-      return;
-    }
-
-    if (typeof bt.connect !== 'function' || typeof bt.write !== 'function') {
-      toast.error('Plugin Bluetooth tidak lengkap. Rebuild aplikasi diperlukan.');
-      setTestPrinting(false);
-      return;
-    }
-
-    // Helper to safely check if connected
-    const isConnected = (): Promise<boolean> =>
-      new Promise((resolve) => {
-        try {
-          if (typeof bt.isConnected !== 'function') {
-            resolve(false);
-            return;
-          }
-          bt.isConnected(
-            () => resolve(true),
-            () => resolve(false)
-          );
-        } catch {
-          resolve(false);
-        }
-      });
-
-    // Helper to safely disconnect
-    const safeDisconnect = (): Promise<void> =>
-      new Promise((resolve) => {
-        try {
-          if (typeof bt.disconnect !== 'function') {
-            resolve();
-            return;
-          }
-          bt.disconnect(
-            () => resolve(),
-            () => resolve()
-          );
-        } catch {
-          resolve();
-        }
-      });
-
-    // Helper to connect with timeout
-    const connectWithTimeout = (address: string, timeoutMs: number = 10000): Promise<void> =>
-      new Promise((resolve, reject) => {
-        let settled = false;
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            reject(new Error('Koneksi timeout'));
-          }
-        }, timeoutMs);
-
-        try {
-          bt.connect(
-            address,
-            () => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                resolve();
-              }
-            },
-            (err: any) => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
-              }
-            }
-          );
-        } catch (e: any) {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            reject(e);
-          }
-        }
-      });
-
-    // Helper to write with timeout
-    const writeWithTimeout = (data: any, timeoutMs: number = 5000): Promise<void> =>
-      new Promise((resolve, reject) => {
-        let settled = false;
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            reject(new Error('Write timeout'));
-          }
-        }, timeoutMs);
-
-        try {
-          bt.write(
-            data,
-            () => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                resolve();
-              }
-            },
-            (err: any) => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal menulis'));
-              }
-            }
-          );
-        } catch (e: any) {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            reject(e);
-          }
-        }
-      });
-
     try {
-      // Check if already connected, disconnect first if so
-      const alreadyConnected = await isConnected();
-      if (alreadyConnected) {
-        await safeDisconnect();
-        // Wait a moment after disconnect
-        await new Promise((r) => setTimeout(r, 500));
+      const plugin = await loadThermalPrinterPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
+        setTestPrinting(false);
+        return;
       }
 
-      // ESC/POS Commands
-      const ESC = '\x1B';
-      const GS = '\x1D';
-      const INIT = ESC + '@';
-      const ALIGN_CENTER = ESC + 'a' + '\x01';
-      const ALIGN_LEFT = ESC + 'a' + '\x00';
-      const BOLD_ON = ESC + 'E' + '\x01';
-      const BOLD_OFF = ESC + 'E' + '\x00';
-      const TEXT_DOUBLE = GS + '!' + '\x11';
-      const TEXT_NORMAL = GS + '!' + '\x00';
-      const CUT = GS + 'V' + '\x00';
-      const FEED = '\n';
+      // Connect to printer
+      console.log('[Printer] Connecting to:', savedPrinterAddress);
+      const connectResult = await plugin.connect({ address: savedPrinterAddress });
+      
+      if (connectResult === null) {
+        toast.error('Gagal terhubung ke printer. Pastikan printer menyala dan dalam jangkauan.');
+        setTestPrinting(false);
+        return;
+      }
 
+      // Wait for connection to stabilize
+      await sleep(500);
+
+      // Build test print content
       const now = new Date();
       const dateStr = now.toLocaleDateString('id-ID', {
         day: '2-digit',
@@ -223,61 +103,39 @@ export function PrinterSettings() {
         minute: '2-digit',
       });
 
-      const lineWidth = 32; // Default 58mm printer
+      const lineWidth = 32;
       const separator = '-'.repeat(lineWidth);
       const separator2 = '='.repeat(lineWidth);
 
-      let printData = INIT;
-      printData += ALIGN_CENTER;
-      printData += TEXT_DOUBLE + BOLD_ON;
-      printData += '*** TEST PRINT ***' + FEED;
-      printData += TEXT_NORMAL + BOLD_OFF;
-      printData += FEED;
-      printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
-      printData += 'MAC: ' + savedPrinterAddress + FEED;
-      printData += FEED;
-      printData += separator + FEED;
-      printData += dateStr + ' ' + timeStr + FEED;
-      printData += separator + FEED;
-      printData += FEED;
-      printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
-      printData += 'Printer siap digunakan.' + FEED;
-      printData += FEED;
-      printData += ALIGN_LEFT;
-      printData += separator2 + FEED;
-      printData += FEED + FEED + FEED;
-      printData += CUT;
-
-      // Build send data - always use string for maximum compatibility
-      // ArrayBuffer can cause crashes on some Android devices
-      const sendData = printData;
-
-      // Connect to printer
-      await connectWithTimeout(savedPrinterAddress, 10000);
-
-      // Wait for connection to stabilize
-      await new Promise((r) => setTimeout(r, 500));
-
-      // Verify connection before writing
-      const connected = await isConnected();
-      if (!connected) {
-        throw new Error('Koneksi terputus sebelum print');
-      }
-
-      // Write data
-      await writeWithTimeout(sendData, 5000);
-
-      // Wait a moment before disconnect
-      await new Promise((r) => setTimeout(r, 300));
-
-      // Disconnect
-      await safeDisconnect();
+      // Use fluent API
+      await plugin.begin()
+        .align('center')
+        .bold()
+        .doubleHeight()
+        .text('*** TEST PRINT ***\n')
+        .clearFormatting()
+        .text('\n')
+        .text('Printer: ' + (savedPrinterName || 'Unknown') + '\n')
+        .text('MAC: ' + savedPrinterAddress + '\n')
+        .text('\n')
+        .text(separator + '\n')
+        .text(dateStr + ' ' + timeStr + '\n')
+        .text(separator + '\n')
+        .text('\n')
+        .bold()
+        .text('Koneksi Berhasil!\n')
+        .clearFormatting()
+        .text('Printer siap digunakan.\n')
+        .text('\n')
+        .align('left')
+        .text(separator2 + '\n')
+        .text('\n\n\n')
+        .cutPaper()
+        .write();
 
       toast.success('Test print berhasil! Cek printer Anda.');
     } catch (error: any) {
       console.error('Test print error:', error);
-      // Try to disconnect on error
-      await safeDisconnect().catch(() => {});
       toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala dan dalam jangkauan'));
     } finally {
       setTestPrinting(false);
@@ -313,132 +171,7 @@ export function PrinterSettings() {
     }
   };
 
-  // Request Bluetooth permissions for Android 12+
-  const requestBluetoothPermissions = async (): Promise<boolean> => {
-    // Method 1: Try cordova-plugin-android-permissions
-    const cordova = (window as any).cordova;
-    if (cordova?.plugins?.permissions) {
-      const permissions = cordova.plugins.permissions;
-      const requiredPermissions = [
-        'android.permission.BLUETOOTH_CONNECT',
-        'android.permission.BLUETOOTH_SCAN',
-        'android.permission.BLUETOOTH',
-        'android.permission.BLUETOOTH_ADMIN',
-        'android.permission.ACCESS_FINE_LOCATION',
-        'android.permission.ACCESS_COARSE_LOCATION',
-      ];
-
-      return new Promise((resolve) => {
-        const requestAllPermissions = () => {
-          permissions.requestPermissions(
-            requiredPermissions,
-            (result: any) => {
-              console.log('[BT] Permission request result:', result);
-              resolve(result.hasPermission !== false);
-            },
-            (err: any) => {
-              console.warn('[BT] Permission request failed:', err);
-              resolve(false);
-            }
-          );
-        };
-
-        // Check if we already have permission
-        permissions.checkPermission(
-          'android.permission.BLUETOOTH_CONNECT',
-          (status: any) => {
-            console.log('[BT] Current permission status:', status);
-            if (status.hasPermission) {
-              resolve(true);
-            } else {
-              requestAllPermissions();
-            }
-          },
-          () => {
-            // If check fails, try requesting anyway
-            requestAllPermissions();
-          }
-        );
-      });
-    }
-
-    // Method 2: Try navigator.permissions API (limited support)
-    if (navigator.permissions) {
-      try {
-        const btStatus = await (navigator.permissions as any).query({ name: 'bluetooth' }).catch(() => null);
-        if (btStatus && btStatus.state === 'granted') {
-          console.log('[BT] Navigator permissions granted');
-          return true;
-        }
-      } catch {
-        console.log('[BT] Navigator permissions API not available for bluetooth');
-      }
-    }
-
-    // Method 3: Try BluetoothSerial's own permission check if available
-    const bt = getBluetoothSerial();
-    if (bt) {
-      // Some versions of cordova-plugin-bluetooth-serial have checkPermission
-      if (typeof bt.checkPermission === 'function') {
-        return new Promise((resolve) => {
-          bt.checkPermission(
-            () => {
-              console.log('[BT] BluetoothSerial checkPermission granted');
-              resolve(true);
-            },
-            () => {
-              // Try to request permission
-              if (typeof bt.requestPermission === 'function') {
-                bt.requestPermission(
-                  () => {
-                    console.log('[BT] BluetoothSerial requestPermission granted');
-                    resolve(true);
-                  },
-                  (err: any) => {
-                    console.warn('[BT] BluetoothSerial requestPermission failed:', err);
-                    resolve(false);
-                  }
-                );
-              } else {
-                resolve(false);
-              }
-            }
-          );
-        });
-      }
-
-      // Try enable() which implicitly requests Bluetooth permissions
-      if (typeof bt.isEnabled === 'function' && typeof bt.enable === 'function') {
-        return new Promise((resolve) => {
-          bt.isEnabled(
-            () => {
-              console.log('[BT] Bluetooth already enabled');
-              resolve(true);
-            },
-            () => {
-              console.log('[BT] Bluetooth disabled, trying to enable...');
-              bt.enable(
-                () => {
-                  console.log('[BT] Bluetooth enabled successfully');
-                  resolve(true);
-                },
-                (err: any) => {
-                  console.warn('[BT] Failed to enable Bluetooth:', err);
-                  // Still return true - maybe it's a permission issue that will show during list()
-                  resolve(true);
-                }
-              );
-            }
-          );
-        });
-      }
-    }
-
-    // If no permission API available, assume we can proceed and let the actual BT call fail if needed
-    console.log('[BT] No permission API available, proceeding anyway');
-    return true;
-  };
-
+  // Scan for devices using capacitor-thermal-printer
   const scanForDevices = async () => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
@@ -449,165 +182,61 @@ export function PrinterSettings() {
     setDevices([]);
     setBluetoothError(null);
 
-    // Request permissions first for Android 12+
-    const hasPermission = await requestBluetoothPermissions();
-    if (!hasPermission) {
-      const errorMsg = 'Izin Bluetooth ditolak. Buka Pengaturan → Aplikasi → [Nama App] → Izin → Aktifkan Bluetooth.';
-      setBluetoothError(errorMsg);
-      toast.error(errorMsg);
-      setScanning(false);
-      return;
-    }
+    try {
+      const plugin = await loadThermalPrinterPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
+        setScanning(false);
+        return;
+      }
 
-    const normalizeDevice = (d: any): BluetoothDevice => ({
-      name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
-      address: d.address || d.macAddress || d.id || d.uuid || d.deviceId || '',
-      id: d.id || d.uuid || d.address || d.macAddress || d.deviceId || '',
-      class: d.class || d.deviceClass,
-      type: d.type,
-    });
-
-    const mergeDevices = (existing: BluetoothDevice[], newDevices: BluetoothDevice[]): BluetoothDevice[] => {
-      const map = new Map<string, BluetoothDevice>();
-      [...existing, ...newDevices].forEach((d) => {
-        if (d.address && d.address.length > 0) {
-          map.set(d.address.toUpperCase(), d);
-        }
+      // Set up listener for discovered devices
+      let discoveredDevices: BluetoothDevice[] = [];
+      
+      plugin.addListener('discoverDevices', (result: { devices: any[] }) => {
+        console.log('[Printer] Discovered devices:', result.devices);
+        const mapped = (result.devices || []).map((d: any) => ({
+          name: d.name || d.deviceName || 'Unknown Device',
+          address: d.address || d.macAddress || '',
+          id: d.address || d.macAddress || '',
+        })).filter((d: BluetoothDevice) => d.address);
+        
+        discoveredDevices = mapped;
+        setDevices(mapped);
       });
-      return Array.from(map.values());
-    };
 
-    let foundDevices: BluetoothDevice[] = [];
+      // Start scanning
+      await plugin.startScan();
+      
+      // Wait for devices to be discovered
+      await sleep(5000);
+      
+      // Stop scan
+      if (plugin.stopScan) {
+        await plugin.stopScan();
+      }
 
-    const finishScanning = (devs: BluetoothDevice[]) => {
-      const validDevices = devs.filter((d) => d.address && d.address.length > 0);
-      setDevices(validDevices);
-
-      if (validDevices.length > 0) {
-        toast.success(`Ditemukan ${validDevices.length} perangkat Bluetooth`);
-      } else {
+      if (discoveredDevices.length === 0) {
         const errorMsg = 'Tidak ada perangkat ditemukan. Pastikan printer sudah di-pair di Pengaturan → Bluetooth HP, atau gunakan Input Manual MAC Address.';
         setBluetoothError(errorMsg);
         toast.info(errorMsg);
-      }
-
-      setScanning(false);
-    };
-
-    const onFail = (err: any) => {
-      console.error('Error scanning devices:', err);
-      const errStr = typeof err === 'string' ? err : err?.message || '';
-      
-      if (errStr.includes('BLUETOOTH_CONNECT') || errStr.includes('permission')) {
-        const errorMsg = 'Izin Bluetooth diperlukan. Buka Pengaturan HP → Aplikasi → [App ini] → Izin → Aktifkan semua izin Bluetooth.';
-        setBluetoothError(errorMsg);
-        toast.error(errorMsg);
       } else {
-        const errorMsg = errStr || 'Gagal mencari perangkat Bluetooth. Coba gunakan Input Manual MAC Address.';
-        setBluetoothError(errorMsg);
-        toast.error('Gagal mencari perangkat Bluetooth');
+        toast.success(`Ditemukan ${discoveredDevices.length} perangkat Bluetooth`);
       }
-      finishScanning(foundDevices);
-    };
-
-    // Method 1: Use Cordova BluetoothSerial plugin (paired devices)
-    const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
-      new Promise((resolve) => {
-        (async () => {
-          const bt = await waitForBluetoothSerial();
-          if (!bt || typeof bt.list !== 'function') {
-            resolve([]);
-            return;
-          }
-
-          const runList = () =>
-            bt.list(
-              (deviceList: any[]) => {
-                console.log('[BT] Cordova BT Serial list() returned:', deviceList);
-                resolve((deviceList || []).map(normalizeDevice));
-              },
-              (err: any) => {
-                console.warn('[BT] Cordova BT Serial list() failed:', err);
-                resolve([]);
-              }
-            );
-
-          // Some Android devices require Bluetooth to be explicitly enabled first
-          if (typeof bt.isEnabled === 'function' && typeof bt.enable === 'function') {
-            try {
-              bt.isEnabled(
-                () => runList(),
-                () =>
-                  bt.enable(
-                    async () => {
-                      await sleep(600);
-                      runList();
-                    },
-                    () => resolve([])
-                  )
-              );
-            } catch {
-              runList();
-            }
-          } else {
-            runList();
-          }
-        })();
-      });
-
-    // Method 3: discoverUnpaired() from Cordova
-    const tryDiscoverUnpaired = (): Promise<BluetoothDevice[]> =>
-      new Promise((resolve) => {
-        const bt = getBluetoothSerial();
-        if (!bt || typeof bt.discoverUnpaired !== 'function') {
-          resolve([]);
-          return;
-        }
-        const discovered: BluetoothDevice[] = [];
-        if (typeof bt.setDeviceDiscoveredListener === 'function') {
-          bt.setDeviceDiscoveredListener((device: any) => {
-            console.log('[BT] discovered:', device);
-            discovered.push(normalizeDevice(device));
-          });
-        }
-        bt.discoverUnpaired(
-          (deviceList: any[]) => {
-            console.log('[BT] discoverUnpaired() returned:', deviceList);
-            const listDevices = (deviceList || []).map(normalizeDevice);
-            resolve(mergeDevices(discovered, listDevices));
-          },
-          (err: any) => {
-            console.warn('[BT] discoverUnpaired() failed:', err);
-            resolve(discovered);
-          }
-        );
-        setTimeout(() => resolve(discovered), 8000);
-      });
-
-    try {
-      // Run scanning methods in parallel
-      const [cordovaDevs, discoveredDevs] = await Promise.all([
-        tryCordovaBTSerial(),
-        tryDiscoverUnpaired(),
-      ]);
-
-      foundDevices = mergeDevices(cordovaDevs, discoveredDevs);
-      finishScanning(foundDevices);
-    } catch (e) {
-      onFail(e);
+    } catch (error: any) {
+      console.error('Error scanning devices:', error);
+      const errorMsg = error?.message || 'Gagal mencari perangkat Bluetooth. Coba gunakan Input Manual MAC Address.';
+      setBluetoothError(errorMsg);
+      toast.error('Gagal mencari perangkat Bluetooth');
+    } finally {
+      setScanning(false);
     }
   };
 
-
+  // Connect to device using capacitor-thermal-printer
   const connectToDevice = async (device: BluetoothDevice) => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
-      return;
-    }
-
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.');
       return;
     }
 
@@ -620,101 +249,31 @@ export function PrinterSettings() {
     setConnecting(true);
     setSelectedDevice({ ...device, address });
 
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-    const safeDisconnect = (): Promise<void> =>
-      new Promise((resolve) => {
-        try {
-          if (typeof bt.disconnect !== 'function') {
-            resolve();
-            return;
-          }
-          bt.disconnect(() => resolve(), () => resolve());
-        } catch {
-          resolve();
-        }
-      });
-
-    const isConnected = (): Promise<boolean> =>
-      new Promise((resolve) => {
-        try {
-          if (typeof bt.isConnected !== 'function') {
-            resolve(false);
-            return;
-          }
-          bt.isConnected(
-            () => resolve(true),
-            () => resolve(false)
-          );
-        } catch {
-          resolve(false);
-        }
-      });
-
-    const connectWithTimeout = (addr: string, timeoutMs: number = 15000): Promise<void> =>
-      new Promise((resolve, reject) => {
-        let settled = false;
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            reject(new Error('Koneksi timeout. Pastikan printer menyala dan sudah di-pair.'));
-          }
-        }, timeoutMs);
-
-        try {
-          bt.connect(
-            addr,
-            () => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                resolve();
-              }
-            },
-            (err: any) => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
-              }
-            }
-          );
-        } catch (e: any) {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            reject(e);
-          }
-        }
-      });
-
     try {
-      console.log('[PrinterSettings] connect start', { address, name: device.name });
+      const plugin = await loadThermalPrinterPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
+        setConnecting(false);
+        setSelectedDevice(null);
+        return;
+      }
 
-      // Putuskan koneksi lama dulu (lebih aman daripada connect->disconnect cepat)
-      await safeDisconnect();
-      await sleep(400);
+      console.log('[PrinterSettings] Connecting to:', address);
 
-      // Koneksi
-      await connectWithTimeout(address, 15000);
-      await sleep(600);
+      const connectResult = await plugin.connect({ address });
+      
+      if (connectResult === null) {
+        throw new Error('Gagal terhubung ke printer');
+      }
 
-      // Pastikan benar-benar connected
-      const ok = await isConnected();
-      console.log('[PrinterSettings] connect isConnected', ok);
-      if (!ok) throw new Error('Koneksi belum stabil. Coba ulangi.');
+      await sleep(500);
 
-      // Simpan printer
+      // Save printer
       await savePrinter({ ...device, address, id: address });
-
-      // Beri jeda sebelum disconnect (menghindari crash di beberapa device)
-      await sleep(600);
-      await safeDisconnect();
 
       toast.success(`Printer tersimpan: ${device.name}`);
     } catch (error: any) {
       console.error('[PrinterSettings] connect error:', error);
-      await safeDisconnect().catch(() => {});
       toast.error(`Gagal terhubung: ${error?.message || 'Unknown error'}`);
     } finally {
       setConnecting(false);
@@ -814,7 +373,7 @@ export function PrinterSettings() {
     setManualOpen(false);
   };
 
-  // Koneksi langsung dengan test koneksi untuk Bluetooth Classic
+  // Direct connect using capacitor-thermal-printer
   const handleDirectConnect = async () => {
     // Validate MAC address format (XX:XX:XX:XX:XX:XX)
     const macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
@@ -828,80 +387,27 @@ export function PrinterSettings() {
       return;
     }
 
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync.');
-      return;
-    }
-
     const address = manualAddress.trim().toUpperCase();
     const name = manualName.trim() || 'Printer Bluetooth';
 
     setConnecting(true);
     toast.info(`Menghubungkan ke ${address}...`);
 
-    // Helper untuk disconnect aman
-    const safeDisconnect = (): Promise<void> =>
-      new Promise((resolve) => {
-        try {
-          if (typeof bt.disconnect !== 'function') {
-            resolve();
-            return;
-          }
-          bt.disconnect(() => resolve(), () => resolve());
-        } catch {
-          resolve();
-        }
-      });
-
-    // Helper untuk connect dengan timeout
-    const connectWithTimeout = (addr: string, timeoutMs: number = 15000): Promise<void> =>
-      new Promise((resolve, reject) => {
-        let settled = false;
-        const timeout = setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            reject(new Error('Koneksi timeout. Pastikan printer menyala dan sudah di-pair.'));
-          }
-        }, timeoutMs);
-
-        try {
-          bt.connect(
-            addr,
-            () => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                resolve();
-              }
-            },
-            (err: any) => {
-              if (!settled) {
-                settled = true;
-                clearTimeout(timeout);
-                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
-              }
-            }
-          );
-        } catch (e: any) {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timeout);
-            reject(e);
-          }
-        }
-      });
-
     try {
-      // Disconnect dulu jika ada koneksi lama
-      await safeDisconnect();
-      await new Promise((r) => setTimeout(r, 400));
+      const plugin = await loadThermalPrinterPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
+        setConnecting(false);
+        return;
+      }
 
-      // Coba koneksi langsung ke MAC address
-      await connectWithTimeout(address, 15000);
+      const connectResult = await plugin.connect({ address });
+      
+      if (connectResult === null) {
+        throw new Error('Gagal terhubung ke printer');
+      }
 
-      // Tunggu koneksi stabil (hindari connect->disconnect terlalu cepat)
-      await new Promise((r) => setTimeout(r, 700));
+      await sleep(500);
 
       const device: BluetoothDevice = {
         name,
@@ -911,10 +417,6 @@ export function PrinterSettings() {
 
       await savePrinter(device);
 
-      // Baru disconnect setelah tersimpan + jeda
-      await new Promise((r) => setTimeout(r, 600));
-      await safeDisconnect();
-
       setManualAddress('');
       setManualName('');
       setManualOpen(false);
@@ -922,7 +424,6 @@ export function PrinterSettings() {
       toast.success(`Berhasil terhubung ke ${name}! Printer tersimpan.`);
     } catch (error: any) {
       console.error('Direct connect error:', error);
-      await safeDisconnect().catch(() => {});
       toast.error(`Gagal koneksi: ${error?.message || 'Pastikan printer menyala dan sudah di-pair di Bluetooth HP'}`);
     } finally {
       setConnecting(false);
