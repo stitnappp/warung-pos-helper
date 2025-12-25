@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CartItem, RestaurantTable } from '@/types/pos';
 import {
   Dialog,
@@ -30,6 +30,8 @@ interface CheckoutDialogProps {
     customerName?: string;
     paymentMethod: string;
     notes?: string;
+    receivedAmount?: number;
+    changeAmount?: number;
   }) => void;
   cart: CartItem[];
   total: number;
@@ -45,6 +47,8 @@ const paymentMethods = [
   { id: 'ewallet', label: 'E-Wallet', icon: Wallet },
 ];
 
+const quickAmounts = [10000, 20000, 50000, 100000];
+
 export function CheckoutDialog({
   open,
   onClose,
@@ -58,6 +62,14 @@ export function CheckoutDialog({
   const [customerName, setCustomerName] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [notes, setNotes] = useState('');
+  const [receivedAmount, setReceivedAmount] = useState<string>('');
+
+  // Reset received amount when dialog opens or total changes
+  useEffect(() => {
+    if (open) {
+      setReceivedAmount('');
+    }
+  }, [open]);
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -67,12 +79,27 @@ export function CheckoutDialog({
     }).format(price);
   };
 
+  const receivedValue = parseFloat(receivedAmount) || 0;
+  const changeAmount = receivedValue - total;
+  const isCashPayment = paymentMethod === 'cash';
+  const canConfirm = !isCashPayment || receivedValue >= total;
+
+  const handleQuickAmount = (amount: number) => {
+    setReceivedAmount(amount.toString());
+  };
+
+  const handleExactAmount = () => {
+    setReceivedAmount(total.toString());
+  };
+
   const handleConfirm = () => {
     onConfirm({
       tableId: tableId && tableId !== 'none' ? tableId : undefined,
       customerName: customerName || undefined,
       paymentMethod,
       notes: notes || undefined,
+      receivedAmount: isCashPayment ? receivedValue : undefined,
+      changeAmount: isCashPayment && changeAmount > 0 ? changeAmount : undefined,
     });
   };
 
@@ -80,7 +107,7 @@ export function CheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl">Checkout</DialogTitle>
         </DialogHeader>
@@ -98,7 +125,7 @@ export function CheckoutDialog({
               </div>
             ))}
             <Separator />
-            <div className="flex justify-between font-bold">
+            <div className="flex justify-between font-bold text-lg">
               <span>Total</span>
               <span className="text-primary">{formatPrice(total)}</span>
             </div>
@@ -157,6 +184,64 @@ export function CheckoutDialog({
             </div>
           </div>
 
+          {/* Cash Payment - Received Amount */}
+          {isCashPayment && (
+            <div className="space-y-3 p-4 bg-secondary/50 rounded-lg border">
+              <div className="space-y-2">
+                <Label>Uang Diterima *</Label>
+                <Input
+                  type="number"
+                  value={receivedAmount}
+                  onChange={(e) => setReceivedAmount(e.target.value)}
+                  placeholder="Masukkan jumlah uang..."
+                  className="text-lg font-semibold"
+                  min={0}
+                />
+              </div>
+
+              {/* Quick Amount Buttons */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExactAmount}
+                  className="text-xs"
+                >
+                  Uang Pas
+                </Button>
+                {quickAmounts.map(amount => (
+                  <Button
+                    key={amount}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickAmount(amount)}
+                    className="text-xs"
+                  >
+                    {formatPrice(amount)}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Change Amount Display */}
+              {receivedValue > 0 && (
+                <div className={cn(
+                  "p-3 rounded-lg text-center",
+                  changeAmount >= 0 ? "bg-accent/20" : "bg-destructive/20"
+                )}>
+                  <p className="text-sm text-muted-foreground">Kembalian</p>
+                  <p className={cn(
+                    "text-2xl font-bold",
+                    changeAmount >= 0 ? "text-accent" : "text-destructive"
+                  )}>
+                    {changeAmount >= 0 ? formatPrice(changeAmount) : `Kurang ${formatPrice(Math.abs(changeAmount))}`}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Notes */}
           <div className="space-y-2">
             <Label>Catatan (Opsional)</Label>
@@ -173,8 +258,12 @@ export function CheckoutDialog({
           <Button variant="outline" onClick={onClose} disabled={isProcessing}>
             Batal
           </Button>
-          <Button onClick={handleConfirm} disabled={isProcessing} className="gradient-primary">
-            {isProcessing ? 'Memproses...' : 'Konfirmasi Pesanan'}
+          <Button 
+            onClick={handleConfirm} 
+            disabled={isProcessing || !canConfirm} 
+            className="gradient-primary"
+          >
+            {isProcessing ? 'Memproses...' : 'Konfirmasi & Cetak Struk'}
           </Button>
         </DialogFooter>
       </DialogContent>
