@@ -5,6 +5,7 @@ import { useMenuItems, useMenuCategories } from '@/hooks/useMenuItems';
 import { useOrders, useCreateOrder, useUpdateOrderStatus } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
 import { useCart } from '@/hooks/useCart';
+import { useOrderNotifications } from '@/hooks/useOrderNotifications';
 import { MenuGrid } from '@/components/pos/MenuGrid';
 import { Cart } from '@/components/pos/Cart';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
@@ -23,6 +24,9 @@ export default function Index() {
   const { data: tables = [] } = useTables();
   const createOrder = useCreateOrder();
   const updateOrderStatus = useUpdateOrderStatus();
+  
+  // Enable realtime notifications for new orders
+  useOrderNotifications();
   
   const {
     cart,
