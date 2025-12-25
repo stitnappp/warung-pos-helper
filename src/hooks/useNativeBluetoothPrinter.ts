@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Order, OrderItem } from '@/types/pos';
 import { format } from 'date-fns';
@@ -37,6 +37,8 @@ interface NativeBluetoothState {
   isScanning: boolean;
 }
 
+const STORAGE_KEY = 'connected_printer';
+
 // Check if running in Capacitor
 const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
 
@@ -60,19 +62,93 @@ const getBluetoothSerial = () => {
   return null;
 };
 
+// Get saved printer from localStorage
+const getSavedPrinter = (): BluetoothDevice | null => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('[NativeBluetooth] Failed to load saved printer:', e);
+  }
+  return null;
+};
+
+// Save printer to localStorage
+const savePrinter = (device: BluetoothDevice | null) => {
+  try {
+    if (device) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(device));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch (e) {
+    console.error('[NativeBluetooth] Failed to save printer:', e);
+  }
+};
+
 export function useNativeBluetoothPrinter() {
-  const [state, setState] = useState<NativeBluetoothState>({
-    isConnected: false,
-    isConnecting: false,
-    isPrinting: false,
-    connectedDevice: null,
-    devices: [],
-    isScanning: false,
+  const [state, setState] = useState<NativeBluetoothState>(() => {
+    // Initialize with saved printer info
+    const savedPrinter = getSavedPrinter();
+    return {
+      isConnected: false,
+      isConnecting: false,
+      isPrinting: false,
+      connectedDevice: savedPrinter,
+      devices: [],
+      isScanning: false,
+    };
   });
 
   // On web builds, this will always be false
   // On native builds with the plugin installed, it will be true
   const isSupported = isCapacitor && !!getBluetoothSerial();
+
+  // Auto-reconnect to saved printer on mount
+  useEffect(() => {
+    const autoReconnect = async () => {
+      const bt = getBluetoothSerial();
+      if (!bt) return;
+
+      const savedPrinter = getSavedPrinter();
+      if (!savedPrinter) return;
+
+      console.log('[NativeBluetooth] Auto-reconnecting to:', savedPrinter.name);
+      setState(prev => ({ ...prev, isConnecting: true }));
+
+      try {
+        // Check if bluetooth is enabled
+        const { enabled } = await bt.isEnabled();
+        if (!enabled) {
+          await bt.enable();
+        }
+
+        // Try to connect
+        await bt.connect({ address: savedPrinter.address });
+        
+        console.log('[NativeBluetooth] Auto-reconnected to:', savedPrinter.name);
+        setState(prev => ({
+          ...prev,
+          isConnected: true,
+          isConnecting: false,
+          connectedDevice: savedPrinter,
+        }));
+      } catch (error: any) {
+        console.error('[NativeBluetooth] Auto-reconnect failed:', error);
+        setState(prev => ({ 
+          ...prev, 
+          isConnecting: false,
+          isConnected: false,
+        }));
+      }
+    };
+
+    if (isSupported) {
+      autoReconnect();
+    }
+  }, [isSupported]);
 
   const scanDevices = useCallback(async () => {
     const bt = getBluetoothSerial();
@@ -124,6 +200,9 @@ export function useNativeBluetoothPrinter() {
       
       console.log('[NativeBluetooth] Connected to:', device.name);
 
+      // Save to localStorage
+      savePrinter(device);
+
       setState(prev => ({
         ...prev,
         isConnected: true,
@@ -147,6 +226,9 @@ export function useNativeBluetoothPrinter() {
 
     try {
       await bt.disconnect();
+      
+      // Remove from localStorage
+      savePrinter(null);
       
       setState(prev => ({
         ...prev,
