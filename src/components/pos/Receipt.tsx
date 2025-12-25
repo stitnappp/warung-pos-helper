@@ -8,10 +8,12 @@ interface ReceiptProps {
   items: OrderItem[];
   tableName?: string;
   cashierName?: string;
+  receivedAmount?: number;
+  changeAmount?: number;
 }
 
 export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
-  ({ order, items, tableName, cashierName }, ref) => {
+  ({ order, items, tableName, cashierName, receivedAmount, changeAmount }, ref) => {
     const formatPrice = (price: number) => {
       return new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -98,6 +100,20 @@ export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
             <span>TOTAL:</span>
             <span>{formatPrice(order.total)}</span>
           </div>
+          {receivedAmount !== undefined && receivedAmount > 0 && (
+            <>
+              <div className="flex justify-between mt-2">
+                <span>Tunai:</span>
+                <span>{formatPrice(receivedAmount)}</span>
+              </div>
+              {changeAmount !== undefined && changeAmount > 0 && (
+                <div className="flex justify-between font-semibold">
+                  <span>Kembalian:</span>
+                  <span>{formatPrice(changeAmount)}</span>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Notes */}

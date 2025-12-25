@@ -47,6 +47,7 @@ export default function Index() {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<{ receivedAmount?: number; changeAmount?: number }>({});
 
   if (authLoading) {
     return (
@@ -96,6 +97,10 @@ export default function Index() {
           status: order.status as Order['status'],
         };
         setReceiptOrder(formattedOrder);
+        setPaymentInfo({
+          receivedAmount: data.receivedAmount,
+          changeAmount: data.changeAmount,
+        });
       }
     } catch (error) {
       // Error already handled by mutation
@@ -241,9 +246,14 @@ export default function Index() {
       {/* Receipt Dialog - Auto opens after checkout */}
       <ReceiptDialog
         open={!!receiptOrder}
-        onClose={() => setReceiptOrder(null)}
+        onClose={() => {
+          setReceiptOrder(null);
+          setPaymentInfo({});
+        }}
         order={receiptOrder}
         onCompleteOrder={(orderId) => updateOrderStatus.mutate({ orderId, status: 'completed' })}
+        receivedAmount={paymentInfo.receivedAmount}
+        changeAmount={paymentInfo.changeAmount}
       />
 
       {/* Cart Summary Bar - Mobile */}

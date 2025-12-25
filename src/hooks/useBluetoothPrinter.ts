@@ -193,7 +193,10 @@ export function useBluetoothPrinter() {
   const printReceipt = useCallback(async (
     order: Order,
     items: OrderItem[],
-    tableName?: string
+    tableName?: string,
+    cashierName?: string,
+    receivedAmount?: number,
+    changeAmount?: number
   ) => {
     if (!state.isConnected || !state.characteristic) {
       toast.error('Printer tidak terhubung');
@@ -245,6 +248,9 @@ export function useBluetoothPrinter() {
         };
         data.push(...textToBytes(padText('Pembayaran:', paymentLabels[order.payment_method] || order.payment_method) + LINE));
       }
+      if (cashierName) {
+        data.push(...textToBytes(padText('Kasir:', cashierName) + LINE));
+      }
       data.push(...textToBytes(SEPARATOR + LINE));
 
       // Items header
@@ -264,13 +270,21 @@ export function useBluetoothPrinter() {
       data.push(...textToBytes(SEPARATOR + LINE));
 
       // Totals
-      data.push(...textToBytes(padText('Subtotal:', formatPrice(order.subtotal)) + LINE));
-      data.push(...textToBytes(padText('Pajak (10%):', formatPrice(order.tax)) + LINE));
       data.push(...COMMANDS.BOLD_ON);
       data.push(...COMMANDS.DOUBLE_HEIGHT);
       data.push(...textToBytes(padText('TOTAL:', formatPrice(order.total)) + LINE));
       data.push(...COMMANDS.NORMAL_SIZE);
       data.push(...COMMANDS.BOLD_OFF);
+
+      // Payment details for cash
+      if (receivedAmount && receivedAmount > 0) {
+        data.push(...textToBytes(padText('Tunai:', formatPrice(receivedAmount)) + LINE));
+        if (changeAmount && changeAmount > 0) {
+          data.push(...COMMANDS.BOLD_ON);
+          data.push(...textToBytes(padText('Kembalian:', formatPrice(changeAmount)) + LINE));
+          data.push(...COMMANDS.BOLD_OFF);
+        }
+      }
 
       // Notes
       if (order.notes) {
