@@ -1,25 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Order, OrderItem } from '@/types/pos';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
-
-// ESC/POS Commands
-const ESC = 0x1B;
-const GS = 0x1D;
-
-const COMMANDS = {
-  INIT: [ESC, 0x40], // Initialize printer
-  ALIGN_CENTER: [ESC, 0x61, 0x01],
-  ALIGN_LEFT: [ESC, 0x61, 0x00],
-  ALIGN_RIGHT: [ESC, 0x61, 0x02],
-  BOLD_ON: [ESC, 0x45, 0x01],
-  BOLD_OFF: [ESC, 0x45, 0x00],
-  DOUBLE_HEIGHT: [ESC, 0x21, 0x10],
-  NORMAL_SIZE: [ESC, 0x21, 0x00],
-  CUT_PAPER: [GS, 0x56, 0x00], // Full cut
-  FEED_LINE: [ESC, 0x64, 0x02], // Feed 2 lines
-};
 
 interface BluetoothDevice {
   name: string;
@@ -41,26 +24,6 @@ const STORAGE_KEY = 'connected_printer';
 
 // Check if running in Capacitor
 const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
-
-// BluetoothSerial plugin reference - will be loaded dynamically on native
-let BluetoothSerial: any = null;
-
-// Try to get the plugin from Capacitor Plugins registry (native only)
-const getBluetoothSerial = () => {
-  if (!isCapacitor) return null;
-  
-  try {
-    // On native, the plugin should be available on window.Capacitor.Plugins
-    const Capacitor = (window as any).Capacitor;
-    if (Capacitor?.Plugins?.BluetoothSerial) {
-      BluetoothSerial = Capacitor.Plugins.BluetoothSerial;
-      return BluetoothSerial;
-    }
-  } catch (error) {
-    console.error('[NativeBluetooth] Failed to get BluetoothSerial:', error);
-  }
-  return null;
-};
 
 // Get saved printer from localStorage
 const getSavedPrinter = (): BluetoothDevice | null => {
@@ -88,9 +51,21 @@ const savePrinter = (device: BluetoothDevice | null) => {
   }
 };
 
+// Get the lidta printer plugin
+const getPrinterPlugin = async () => {
+  if (!isCapacitor) return null;
+  
+  try {
+    const { LidtaCapacitorBlPrinter } = await import('lidta-capacitor-bl-printer');
+    return LidtaCapacitorBlPrinter;
+  } catch (error) {
+    console.error('[NativeBluetooth] Failed to load printer plugin:', error);
+    return null;
+  }
+};
+
 export function useNativeBluetoothPrinter() {
   const [state, setState] = useState<NativeBluetoothState>(() => {
-    // Initialize with saved printer info
     const savedPrinter = getSavedPrinter();
     return {
       isConnected: false,
@@ -101,102 +76,71 @@ export function useNativeBluetoothPrinter() {
       isScanning: false,
     };
   });
+  
+  const pluginRef = useRef<any>(null);
+  const [isSupported, setIsSupported] = useState(false);
 
-  // On web builds, this will always be false
-  // On native builds with the plugin installed, it will be true
-  const isSupported = isCapacitor && !!getBluetoothSerial();
-
-  // Auto-reconnect to saved printer on mount
+  // Initialize plugin
   useEffect(() => {
-    const autoReconnect = async () => {
-      const bt = getBluetoothSerial();
-      if (!bt) return;
-
-      const savedPrinter = getSavedPrinter();
-      if (!savedPrinter) return;
-
-      console.log('[NativeBluetooth] Auto-reconnecting to:', savedPrinter.name);
-      setState(prev => ({ ...prev, isConnecting: true }));
-
-      try {
-        // Check if bluetooth is enabled
-        const { enabled } = await bt.isEnabled();
-        if (!enabled) {
-          await bt.enable();
-        }
-
-        // Try to connect
-        await bt.connect({ address: savedPrinter.address });
-        
-        console.log('[NativeBluetooth] Auto-reconnected to:', savedPrinter.name);
-        setState(prev => ({
-          ...prev,
-          isConnected: true,
-          isConnecting: false,
-          connectedDevice: savedPrinter,
-        }));
-      } catch (error: any) {
-        console.error('[NativeBluetooth] Auto-reconnect failed:', error);
-        setState(prev => ({ 
-          ...prev, 
-          isConnecting: false,
-          isConnected: false,
-        }));
+    const init = async () => {
+      if (!isCapacitor) return;
+      
+      const plugin = await getPrinterPlugin();
+      if (plugin) {
+        pluginRef.current = plugin;
+        setIsSupported(true);
+        console.log('[NativeBluetooth] Plugin loaded successfully');
       }
     };
-
-    if (isSupported) {
-      autoReconnect();
-    }
-  }, [isSupported]);
+    init();
+  }, []);
 
   const scanDevices = useCallback(async () => {
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Bluetooth tidak tersedia di platform ini');
+    const plugin = pluginRef.current;
+    if (!plugin) {
+      toast.error('Plugin printer tidak tersedia');
       return [];
     }
 
-    setState(prev => ({ ...prev, isScanning: true }));
+    setState(prev => ({ ...prev, isScanning: true, devices: [] }));
 
     try {
-      // Request enable if not enabled
-      const { enabled } = await bt.isEnabled();
-      if (!enabled) {
-        await bt.enable();
-      }
-
       // Get paired devices
-      const { devices: pairedDevices } = await bt.getPairedDevices();
-      console.log('[NativeBluetooth] Paired devices:', pairedDevices);
+      const result = await plugin.getPairedDevices();
+      console.log('[NativeBluetooth] Paired devices:', result);
 
+      const devices = result.devices || [];
       setState(prev => ({ 
         ...prev, 
-        devices: pairedDevices || [],
+        devices: devices,
         isScanning: false 
       }));
 
-      return pairedDevices || [];
+      if (devices.length === 0) {
+        toast.info('Tidak ada perangkat Bluetooth ditemukan. Pastikan printer sudah di-pair.');
+      }
+
+      return devices;
     } catch (error: any) {
       console.error('[NativeBluetooth] Scan error:', error);
-      toast.error(`Gagal scan: ${error.message}`);
+      toast.error(`Gagal scan: ${error.message || 'Unknown error'}`);
       setState(prev => ({ ...prev, isScanning: false }));
       return [];
     }
   }, []);
 
   const connect = useCallback(async (device: BluetoothDevice) => {
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Bluetooth tidak tersedia');
+    const plugin = pluginRef.current;
+    if (!plugin) {
+      toast.error('Plugin printer tidak tersedia');
       return false;
     }
 
     setState(prev => ({ ...prev, isConnecting: true }));
 
     try {
-      // Connect to device
-      await bt.connect({ address: device.address });
+      // Connect to device using lidta plugin
+      await plugin.connect({ address: device.address });
       
       console.log('[NativeBluetooth] Connected to:', device.name);
 
@@ -214,18 +158,18 @@ export function useNativeBluetoothPrinter() {
       return true;
     } catch (error: any) {
       console.error('[NativeBluetooth] Connect error:', error);
-      toast.error(`Gagal connect: ${error.message}`);
+      toast.error(`Gagal connect: ${error.message || 'Unknown error'}`);
       setState(prev => ({ ...prev, isConnecting: false }));
       return false;
     }
   }, []);
 
   const disconnect = useCallback(async () => {
-    const bt = getBluetoothSerial();
-    if (!bt) return;
+    const plugin = pluginRef.current;
+    if (!plugin) return;
 
     try {
-      await bt.disconnect();
+      await plugin.disconnect();
       
       // Remove from localStorage
       savePrinter(null);
@@ -242,19 +186,9 @@ export function useNativeBluetoothPrinter() {
     }
   }, []);
 
-  const textToBytes = useCallback((text: string): number[] => {
-    const encoder = new TextEncoder();
-    return Array.from(encoder.encode(text));
-  }, []);
-
   const formatPrice = (price: number): string => {
     const formatted = price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     return 'Rp' + formatted;
-  };
-
-  const padText = (left: string, right: string, width: number = 32): string => {
-    const spaces = width - left.length - right.length;
-    return left + ' '.repeat(Math.max(1, spaces)) + right;
   };
 
   const printReceipt = useCallback(async (
@@ -265,13 +199,13 @@ export function useNativeBluetoothPrinter() {
     receivedAmount?: number,
     changeAmount?: number
   ) => {
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Bluetooth tidak tersedia');
+    const plugin = pluginRef.current;
+    if (!plugin) {
+      toast.error('Plugin printer tidak tersedia');
       return false;
     }
 
-    if (!state.isConnected) {
+    if (!state.isConnected && !state.connectedDevice) {
       toast.error('Printer tidak terhubung');
       return false;
     }
@@ -279,121 +213,60 @@ export function useNativeBluetoothPrinter() {
     setState(prev => ({ ...prev, isPrinting: true }));
 
     try {
-      const data: number[] = [];
-      const LINE = '\n';
-      const SEPARATOR = '--------------------------------';
+      // If not connected, try to connect first
+      if (!state.isConnected && state.connectedDevice) {
+        await plugin.connect({ address: state.connectedDevice.address });
+        setState(prev => ({ ...prev, isConnected: true }));
+      }
 
-      // Initialize printer
-      data.push(...COMMANDS.INIT);
-
-      // Header - Store name (centered, bold, double height)
-      data.push(...COMMANDS.ALIGN_CENTER);
-      data.push(...COMMANDS.BOLD_ON);
-      data.push(...COMMANDS.DOUBLE_HEIGHT);
-      data.push(...textToBytes('RM MINANG MAIMBAOE' + LINE));
+      // Create receipt HTML for printing via html2canvas -> base64
+      const receiptHtml = generateReceiptHtml(order, items, tableName, cashierName, receivedAmount, changeAmount);
       
-      // Address (normal size)
-      data.push(...COMMANDS.NORMAL_SIZE);
-      data.push(...COMMANDS.BOLD_OFF);
-      data.push(...textToBytes('Jln. Gatot Subroto no 10' + LINE));
-      data.push(...textToBytes('depan balai desa Losari Kidul' + LINE));
-      data.push(...textToBytes('Kec Losari Kab Cirebon' + LINE));
-      data.push(...textToBytes(SEPARATOR + LINE));
+      // Create a temporary div to render the receipt
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = receiptHtml;
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.left = '-9999px';
+      tempDiv.style.width = '384px'; // 58mm at ~96dpi
+      tempDiv.style.background = 'white';
+      tempDiv.style.color = 'black';
+      tempDiv.style.fontFamily = 'monospace';
+      tempDiv.style.fontSize = '12px';
+      tempDiv.style.padding = '10px';
+      document.body.appendChild(tempDiv);
 
-      // Order info (left aligned)
-      data.push(...COMMANDS.ALIGN_LEFT);
-      data.push(...textToBytes(padText('No. Order:', '#' + order.id.slice(-6).toUpperCase()) + LINE));
-      data.push(...textToBytes(padText('Tanggal:', format(new Date(order.created_at), 'dd/MM/yy HH:mm', { locale: id })) + LINE));
+      // Use html2canvas to convert to image
+      const html2canvasModule = await import('html2canvas');
+      const canvas = await html2canvasModule.default(tempDiv, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+      });
       
-      if (order.customer_name) {
-        data.push(...textToBytes(padText('Pelanggan:', order.customer_name) + LINE));
-      }
-      if (tableName) {
-        data.push(...textToBytes(padText('Meja:', tableName) + LINE));
-      }
-      if (order.payment_method) {
-        const paymentLabels: Record<string, string> = {
-          cash: 'Tunai',
-          qris: 'QRIS',
-          transfer: 'Transfer',
-          card: 'Kartu',
-          ewallet: 'E-Wallet',
-        };
-        data.push(...textToBytes(padText('Pembayaran:', paymentLabels[order.payment_method] || order.payment_method) + LINE));
-      }
-      if (cashierName) {
-        data.push(...textToBytes(padText('Kasir:', cashierName) + LINE));
-      }
-      data.push(...textToBytes(SEPARATOR + LINE));
+      // Convert to base64
+      const base64Image = canvas.toDataURL('image/png');
+      
+      // Remove temp div
+      document.body.removeChild(tempDiv);
 
-      // Items header
-      data.push(...COMMANDS.BOLD_ON);
-      data.push(...textToBytes(padText('Item', 'Qty   Harga') + LINE));
-      data.push(...COMMANDS.BOLD_OFF);
+      // Print using lidta plugin
+      await plugin.printBase64({
+        msg: base64Image,
+        align: 1, // center
+      });
 
-      // Items
-      for (const item of items) {
-        const itemTotal = formatPrice(item.price * item.quantity);
-        data.push(...textToBytes(item.name + LINE));
-        data.push(...textToBytes(padText(`  ${formatPrice(item.price)} x ${item.quantity}`, itemTotal) + LINE));
-        if (item.notes) {
-          data.push(...textToBytes(`  Catatan: ${item.notes}` + LINE));
-        }
-      }
-      data.push(...textToBytes(SEPARATOR + LINE));
-
-      // Totals
-      data.push(...COMMANDS.BOLD_ON);
-      data.push(...COMMANDS.DOUBLE_HEIGHT);
-      data.push(...textToBytes(padText('TOTAL:', formatPrice(order.total)) + LINE));
-      data.push(...COMMANDS.NORMAL_SIZE);
-      data.push(...COMMANDS.BOLD_OFF);
-
-      // Payment details for cash
-      if (receivedAmount && receivedAmount > 0) {
-        data.push(...textToBytes(padText('Tunai:', formatPrice(receivedAmount)) + LINE));
-        if (changeAmount && changeAmount > 0) {
-          data.push(...COMMANDS.BOLD_ON);
-          data.push(...textToBytes(padText('Kembalian:', formatPrice(changeAmount)) + LINE));
-          data.push(...COMMANDS.BOLD_OFF);
-        }
-      }
-
-      // Notes
-      if (order.notes) {
-        data.push(...textToBytes(SEPARATOR + LINE));
-        data.push(...textToBytes(`Catatan: ${order.notes}` + LINE));
-      }
-
-      // Footer
-      data.push(...textToBytes(SEPARATOR + LINE));
-      data.push(...COMMANDS.ALIGN_CENTER);
-      data.push(...textToBytes('Terima kasih!' + LINE));
-      data.push(...textToBytes('Simpan struk ini' + LINE));
-      data.push(...textToBytes('sebagai bukti pembayaran' + LINE));
-
-      // Feed and cut
-      data.push(...COMMANDS.FEED_LINE);
-      data.push(...COMMANDS.FEED_LINE);
-      data.push(...COMMANDS.CUT_PAPER);
-
-      // Convert to base64 for sending
-      const uint8Array = new Uint8Array(data);
-      const base64Data = btoa(String.fromCharCode(...uint8Array));
-
-      // Send to printer
-      await bt.write({ value: base64Data });
-
+      // Disconnect after printing
+      await plugin.disconnect();
+      
       toast.success('Struk berhasil dicetak!');
-      setState(prev => ({ ...prev, isPrinting: false }));
+      setState(prev => ({ ...prev, isPrinting: false, isConnected: false }));
       return true;
     } catch (error: any) {
       console.error('[NativeBluetooth] Print error:', error);
-      toast.error(`Gagal mencetak: ${error.message}`);
+      toast.error(`Gagal mencetak: ${error.message || 'Unknown error'}`);
       setState(prev => ({ ...prev, isPrinting: false }));
       return false;
     }
-  }, [state.isConnected, textToBytes]);
+  }, [state.isConnected, state.connectedDevice]);
 
   return {
     ...state,
@@ -403,4 +276,140 @@ export function useNativeBluetoothPrinter() {
     disconnect,
     printReceipt,
   };
+}
+
+function generateReceiptHtml(
+  order: Order,
+  items: OrderItem[],
+  tableName?: string,
+  cashierName?: string,
+  receivedAmount?: number,
+  changeAmount?: number
+): string {
+  const formatPrice = (price: number): string => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+    }).format(price);
+  };
+
+  const paymentLabels: Record<string, string> = {
+    cash: 'Tunai',
+    qris: 'QRIS',
+    transfer: 'Transfer',
+    card: 'Kartu',
+    ewallet: 'E-Wallet',
+  };
+
+  const orderDate = format(new Date(order.created_at), 'dd/MM/yyyy HH:mm', { locale: id });
+
+  let html = `
+    <div style="text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 8px;">
+      RM MINANG MAIMBAOE
+    </div>
+    <div style="text-align: center; font-size: 10px; margin-bottom: 12px;">
+      Jln. Gatot Subroto no 10<br/>
+      depan balai desa Losari Kidul<br/>
+      Kec Losari Kab Cirebon
+    </div>
+    <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+    <div style="font-size: 11px;">
+      <div style="display: flex; justify-content: space-between;">
+        <span>No. Order:</span>
+        <span>#${order.id.slice(-6).toUpperCase()}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between;">
+        <span>Tanggal:</span>
+        <span>${orderDate}</span>
+      </div>
+      ${order.customer_name ? `
+      <div style="display: flex; justify-content: space-between;">
+        <span>Pelanggan:</span>
+        <span>${order.customer_name}</span>
+      </div>
+      ` : ''}
+      ${tableName ? `
+      <div style="display: flex; justify-content: space-between;">
+        <span>Meja:</span>
+        <span>${tableName}</span>
+      </div>
+      ` : ''}
+      ${order.payment_method ? `
+      <div style="display: flex; justify-content: space-between;">
+        <span>Pembayaran:</span>
+        <span>${paymentLabels[order.payment_method] || order.payment_method}</span>
+      </div>
+      ` : ''}
+      ${cashierName ? `
+      <div style="display: flex; justify-content: space-between;">
+        <span>Kasir:</span>
+        <span>${cashierName}</span>
+      </div>
+      ` : ''}
+    </div>
+    <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+    <div style="font-size: 11px;">
+      <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px;">
+        <span>Item</span>
+        <span>Qty   Harga</span>
+      </div>
+  `;
+
+  for (const item of items) {
+    html += `
+      <div style="margin-bottom: 4px;">
+        <div>${item.name}</div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>  ${formatPrice(item.price)} x ${item.quantity}</span>
+          <span>${formatPrice(item.price * item.quantity)}</span>
+        </div>
+        ${item.notes ? `<div style="font-size: 10px;">  Catatan: ${item.notes}</div>` : ''}
+      </div>
+    `;
+  }
+
+  html += `
+    <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+    <div style="font-weight: bold; font-size: 14px; display: flex; justify-content: space-between;">
+      <span>TOTAL:</span>
+      <span>${formatPrice(order.total)}</span>
+    </div>
+  `;
+
+  if (receivedAmount && receivedAmount > 0) {
+    html += `
+      <div style="display: flex; justify-content: space-between; font-size: 11px;">
+        <span>Tunai:</span>
+        <span>${formatPrice(receivedAmount)}</span>
+      </div>
+    `;
+    if (changeAmount && changeAmount > 0) {
+      html += `
+        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold;">
+          <span>Kembalian:</span>
+          <span>${formatPrice(changeAmount)}</span>
+        </div>
+      `;
+    }
+  }
+
+  if (order.notes) {
+    html += `
+      <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+      <div style="font-size: 10px;">Catatan: ${order.notes}</div>
+    `;
+  }
+
+  html += `
+    <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+    <div style="text-align: center; font-size: 11px;">
+      Terima kasih!<br/>
+      Simpan struk ini sebagai<br/>
+      bukti pembayaran
+    </div>
+    <div style="height: 20px;"></div>
+  `;
+
+  return html;
 }
