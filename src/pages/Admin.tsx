@@ -29,6 +29,7 @@ import { MenuItem, MenuCategory, RestaurantTable } from '@/types/pos';
 import { toast } from 'sonner';
 import { SalesReport } from '@/components/pos/SalesReport';
 import { TelegramSettings } from '@/components/pos/TelegramSettings';
+import { MidtransSettings } from '@/components/pos/MidtransSettings';
 
 export default function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -274,8 +275,9 @@ export default function Admin() {
           </TabsContent>
 
           {/* Settings Tab */}
-          <TabsContent value="settings" className="space-y-4">
+          <TabsContent value="settings" className="space-y-6">
             <h2 className="text-xl font-semibold">Pengaturan</h2>
+            <MidtransSettings />
             <TelegramSettings />
           </TabsContent>
         </Tabs>

@@ -5,3 +5,9 @@ verify_jwt = false
 
 [functions.send-telegram-report]
 verify_jwt = false
+
+[functions.midtrans-qris]
+verify_jwt = false
+
+[functions.midtrans-status]
+verify_jwt = false
