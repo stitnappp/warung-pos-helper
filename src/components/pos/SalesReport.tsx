@@ -2,57 +2,88 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSalesReport } from '@/hooks/useSalesReport';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
-import { format, subDays, startOfMonth, endOfMonth, subMonths, parseISO } from 'date-fns';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useCurrentUserProfile } from '@/hooks/useUserProfile';
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { 
-  TrendingUp, 
-  ShoppingBag, 
-  DollarSign, 
-  Calendar,
-  BarChart3,
+  FileText,
+  TrendingUp,
+  Wallet,
+  CreditCard,
+  QrCode,
+  Send,
+  Copy,
+  Bell,
+  Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
-type DateRange = '7days' | '30days' | 'thisMonth' | 'lastMonth';
+type DateRange = 'today' | 'thisWeek' | 'thisMonth' | 'custom';
 
-const COLORS = ['hsl(25, 95%, 53%)', 'hsl(145, 60%, 45%)', 'hsl(45, 95%, 55%)', 'hsl(200, 70%, 50%)', 'hsl(280, 60%, 50%)'];
+interface SalesStats {
+  totalTransactions: number;
+  totalRevenue: number;
+  averageOrder: number;
+  cashTotal: number;
+  transferTotal: number;
+  qrisTotal: number;
+}
 
 export function SalesReport() {
-  const [dateRange, setDateRange] = useState<DateRange>('7days');
+  const [dateRange, setDateRange] = useState<DateRange>('today');
+  const [sending, setSending] = useState(false);
+  const { data: profile } = useCurrentUserProfile();
 
   const getDateRange = () => {
     const today = new Date();
     switch (dateRange) {
-      case '7days':
-        return { start: subDays(today, 6), end: today };
-      case '30days':
-        return { start: subDays(today, 29), end: today };
+      case 'today':
+        return { start: startOfDay(today), end: endOfDay(today) };
+      case 'thisWeek':
+        return { start: startOfWeek(today, { weekStartsOn: 1 }), end: endOfWeek(today, { weekStartsOn: 1 }) };
       case 'thisMonth':
         return { start: startOfMonth(today), end: endOfMonth(today) };
-      case 'lastMonth':
-        const lastMonth = subMonths(today, 1);
-        return { start: startOfMonth(lastMonth), end: endOfMonth(lastMonth) };
       default:
-        return { start: subDays(today, 6), end: today };
+        return { start: startOfDay(today), end: endOfDay(today) };
     }
   };
 
   const { start, end } = getDateRange();
-  const { data, isLoading, error } = useSalesReport(start, end);
+
+  const { data: stats, isLoading } = useQuery({
+    queryKey: ['salesStats', dateRange, start.toISOString(), end.toISOString()],
+    queryFn: async (): Promise<SalesStats> => {
+      const { data: orders, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('status', 'completed')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
+
+      if (error) throw error;
+
+      const totalRevenue = orders?.reduce((sum, o) => sum + Number(o.total), 0) || 0;
+      const totalTransactions = orders?.length || 0;
+      const averageOrder = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+
+      const cashTotal = orders?.filter(o => o.payment_method === 'cash').reduce((sum, o) => sum + Number(o.total), 0) || 0;
+      const transferTotal = orders?.filter(o => o.payment_method === 'transfer').reduce((sum, o) => sum + Number(o.total), 0) || 0;
+      const qrisTotal = orders?.filter(o => o.payment_method === 'qris').reduce((sum, o) => sum + Number(o.total), 0) || 0;
+
+      return {
+        totalTransactions,
+        totalRevenue,
+        averageOrder,
+        cashTotal,
+        transferTotal,
+        qrisTotal,
+      };
+    },
+  });
 
   const formatPrice = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -63,290 +94,264 @@ export function SalesReport() {
     }).format(value);
   };
 
-  const formatShortPrice = (value: number) => {
-    if (value >= 1000000) {
-      return `${(value / 1000000).toFixed(1)}jt`;
+  const getDateLabel = () => {
+    switch (dateRange) {
+      case 'today':
+        return format(new Date(), 'dd MMMM yyyy', { locale: id });
+      case 'thisWeek':
+        return `${format(start, 'dd MMM', { locale: id })} - ${format(end, 'dd MMM yyyy', { locale: id })}`;
+      case 'thisMonth':
+        return format(new Date(), 'MMMM yyyy', { locale: id });
+      default:
+        return format(new Date(), 'dd MMMM yyyy', { locale: id });
     }
-    if (value >= 1000) {
-      return `${(value / 1000).toFixed(0)}rb`;
-    }
-    return value.toString();
   };
 
-  const chartData = data?.dailyData.map(d => ({
-    ...d,
-    displayDate: format(parseISO(d.date), 'dd MMM', { locale: id }),
-  })) || [];
+  const generateReportText = () => {
+    if (!stats) return '';
+    
+    const periodLabel = dateRange === 'today' ? 'Hari Ini' : 
+                       dateRange === 'thisWeek' ? 'Minggu Ini' : 'Bulan Ini';
+    
+    return `📊 *LAPORAN PENJUALAN*
+📅 Periode: ${periodLabel}
+📆 ${getDateLabel()}
 
-  const pieData = data?.summary.topItems.map(item => ({
-    name: item.name,
-    value: item.revenue,
-  })) || [];
+💰 *RINGKASAN*
+• Total Transaksi: ${stats.totalTransactions}
+• Total Pendapatan: ${formatPrice(stats.totalRevenue)}
+• Rata-rata: ${formatPrice(stats.averageOrder)}
+
+💳 *METODE PEMBAYARAN*
+• Tunai: ${formatPrice(stats.cashTotal)}
+• Transfer: ${formatPrice(stats.transferTotal)}
+• QRIS: ${formatPrice(stats.qrisTotal)}
+
+👤 Dibuat oleh: ${profile?.full_name || 'Admin'}
+🕐 ${format(new Date(), 'HH:mm', { locale: id })}`;
+  };
+
+  const handleSendTelegram = async () => {
+    if (sending || !stats) return;
+    setSending(true);
+
+    try {
+      const periodLabel = dateRange === 'today' ? 'Harian' : 
+                         dateRange === 'thisWeek' ? 'Mingguan' : 'Bulanan';
+
+      const { error } = await supabase.functions.invoke('send-telegram-report', {
+        body: {
+          report: {
+            type: dateRange === 'today' ? 'daily' : dateRange === 'thisWeek' ? 'weekly' : 'monthly',
+            date: getDateLabel(),
+            totalOrders: stats.totalTransactions,
+            totalRevenue: stats.totalRevenue,
+            completedOrders: stats.totalTransactions,
+            pendingOrders: 0,
+            cancelledOrders: 0,
+            cashTotal: stats.cashTotal,
+            transferTotal: stats.transferTotal,
+            qrisTotal: stats.qrisTotal,
+            generatedBy: profile?.full_name || 'Admin',
+          },
+        },
+      });
+
+      if (error) throw error;
+      toast.success(`Laporan ${periodLabel} berhasil dikirim ke Telegram!`);
+    } catch (error) {
+      console.error('Error sending report:', error);
+      toast.error('Gagal mengirim laporan ke Telegram');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleCopyText = () => {
+    const text = generateReportText().replace(/\*/g, '');
+    navigator.clipboard.writeText(text);
+    toast.success('Teks laporan berhasil disalin!');
+  };
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="flex gap-2">
           {[1, 2, 3, 4].map(i => (
-            <Skeleton key={i} className="h-9 w-24" />
+            <Skeleton key={i} className="h-10 w-24 rounded-full" />
           ))}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1, 2, 3].map(i => (
-            <Skeleton key={i} className="h-28 rounded-lg" />
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4, 5, 6].map(i => (
+            <Skeleton key={i} className="h-24 rounded-xl" />
           ))}
         </div>
-        <Skeleton className="h-80 rounded-lg" />
       </div>
     );
   }
 
-  if (error) {
-    return (
-      <Card className="py-12">
-        <div className="text-center text-muted-foreground">
-          <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>Gagal memuat laporan</p>
-          <p className="text-sm">Silakan coba lagi nanti</p>
-        </div>
-      </Card>
-    );
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Date Range Filter */}
       <div className="flex flex-wrap gap-2">
         <Button
-          variant={dateRange === '7days' ? 'default' : 'outline'}
+          variant={dateRange === 'today' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setDateRange('7days')}
+          onClick={() => setDateRange('today')}
+          className={dateRange === 'today' ? 'gradient-primary' : ''}
         >
-          <Calendar className="h-4 w-4 mr-1" />
-          7 Hari
+          Hari Ini
         </Button>
         <Button
-          variant={dateRange === '30days' ? 'default' : 'outline'}
+          variant={dateRange === 'thisWeek' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setDateRange('30days')}
+          onClick={() => setDateRange('thisWeek')}
+          className={dateRange === 'thisWeek' ? 'gradient-primary' : ''}
         >
-          30 Hari
+          Minggu Ini
         </Button>
         <Button
           variant={dateRange === 'thisMonth' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setDateRange('thisMonth')}
+          className={dateRange === 'thisMonth' ? 'gradient-primary' : ''}
         >
           Bulan Ini
         </Button>
-        <Button
-          variant={dateRange === 'lastMonth' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setDateRange('lastMonth')}
-        >
-          Bulan Lalu
-        </Button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="gradient-primary text-primary-foreground">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 opacity-90">
-              <DollarSign className="h-4 w-4" />
-              Total Pendapatan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              {formatPrice(data?.summary.totalRevenue || 0)}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
-              <ShoppingBag className="h-4 w-4" />
-              Total Pesanan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-foreground">
-              {data?.summary.totalOrders || 0}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
-              <TrendingUp className="h-4 w-4" />
-              Rata-rata Pesanan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-foreground">
-              {formatPrice(data?.summary.averageOrderValue || 0)}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Revenue Chart */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Grafik Pendapatan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {chartData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center text-muted-foreground">
-                Tidak ada data untuk periode ini
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis 
-                    dataKey="displayDate" 
-                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                  />
-                  <YAxis 
-                    tickFormatter={formatShortPrice}
-                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                  />
-                  <Tooltip 
-                    formatter={(value: number) => [formatPrice(value), 'Pendapatan']}
-                    contentStyle={{
-                      backgroundColor: 'hsl(var(--popover))',
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px',
-                      color: 'hsl(var(--popover-foreground))',
-                    }}
-                    labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
-                  />
-                  <Bar 
-                    dataKey="total" 
-                    fill="hsl(25, 95%, 53%)" 
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Top Items */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Menu Terlaris</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {pieData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center text-muted-foreground">
-                Tidak ada data
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <ResponsiveContainer width="100%" height={160}>
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={70}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {pieData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      formatter={(value: number) => formatPrice(value)}
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--popover))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="space-y-2">
-                  {data?.summary.topItems.map((item, index) => (
-                    <div key={item.name} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-3 h-3 rounded-full" 
-                          style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                        />
-                        <span className="truncate max-w-[120px]">{item.name}</span>
-                      </div>
-                      <span className="text-muted-foreground">{item.quantity}x</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Orders Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Jumlah Pesanan per Hari</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {chartData.length === 0 ? (
-            <div className="h-48 flex items-center justify-center text-muted-foreground">
-              Tidak ada data untuk periode ini
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Total Transaksi */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <FileText className="h-4 w-4" />
+              <span className="text-sm">Total Transaksi</span>
             </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis 
-                  dataKey="displayDate" 
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  tickLine={false}
-                  axisLine={{ stroke: 'hsl(var(--border))' }}
-                />
-                <YAxis 
-                  tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                  tickLine={false}
-                  axisLine={{ stroke: 'hsl(var(--border))' }}
-                />
-                <Tooltip 
-                  formatter={(value: number) => [value, 'Pesanan']}
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--popover))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                    color: 'hsl(var(--popover-foreground))',
-                  }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="orders" 
-                  stroke="hsl(145, 60%, 45%)" 
-                  strokeWidth={2}
-                  dot={{ fill: 'hsl(145, 60%, 45%)', strokeWidth: 0, r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+            <p className="text-2xl font-bold text-foreground">
+              {stats?.totalTransactions || 0}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Total Pendapatan */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <TrendingUp className="h-4 w-4" />
+              <span className="text-sm">Total Pendapatan</span>
+            </div>
+            <p className="text-2xl font-bold text-primary">
+              {formatPrice(stats?.totalRevenue || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Rata-rata */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <TrendingUp className="h-4 w-4" />
+              <span className="text-sm">Rata-rata</span>
+            </div>
+            <p className="text-2xl font-bold text-foreground">
+              {formatPrice(stats?.averageOrder || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Tunai */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <Wallet className="h-4 w-4" />
+              <span className="text-sm">Tunai</span>
+            </div>
+            <p className="text-2xl font-bold text-primary">
+              {formatPrice(stats?.cashTotal || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Transfer */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <CreditCard className="h-4 w-4" />
+              <span className="text-sm">Transfer</span>
+            </div>
+            <p className="text-2xl font-bold text-cyan-500">
+              {formatPrice(stats?.transferTotal || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* QRIS */}
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              <QrCode className="h-4 w-4" />
+              <span className="text-sm">QRIS</span>
+            </div>
+            <p className="text-2xl font-bold text-primary">
+              {formatPrice(stats?.qrisTotal || 0)}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Telegram Report Section */}
+      <Card className="bg-card/50 border-border/50">
+        <CardContent className="p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Send className="h-5 w-5 text-primary" />
+            <span className="font-medium">Kirim Laporan via Telegram Bot</span>
+          </div>
+          
+          <div className="flex gap-2">
+            <Button
+              onClick={handleSendTelegram}
+              disabled={sending}
+              className="gradient-primary"
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 mr-2" />
+              )}
+              Kirim ke Telegram
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleCopyText}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Salin Teks
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Pastikan Telegram Bot sudah dikonfigurasi di menu Pengaturan → Notifikasi Telegram
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Daily Reminder Section */}
+      <Card className="bg-card/50 border-border/50">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="h-5 w-5" />
+            <span className="font-semibold text-lg">Pengingat Laporan Harian</span>
+          </div>
+          
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Aktifkan Pengingat</p>
+              <p className="text-sm text-muted-foreground">Terima notifikasi untuk mengirim laporan</p>
+            </div>
+            <Switch disabled />
+          </div>
         </CardContent>
       </Card>
     </div>
