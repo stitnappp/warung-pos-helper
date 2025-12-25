@@ -59,18 +59,15 @@ export function PrinterSettings() {
       const bt = getBluetoothSerial();
       if (!bt) {
         toast.error('Plugin Bluetooth belum siap. Pastikan sudah run: npx cap sync android');
-        setTestPrinting(false);
         return;
       }
 
-      // Check if methods exist
       if (typeof bt.connect !== 'function' || typeof bt.write !== 'function') {
         toast.error('Plugin Bluetooth tidak lengkap. Rebuild aplikasi diperlukan.');
-        setTestPrinting(false);
         return;
       }
 
-      // ESC/POS Commands
+      // ESC/POS Commands (string-based for composing, converted to bytes at the end)
       const ESC = '\x1B';
       const GS = '\x1D';
       const INIT = ESC + '@';
@@ -94,7 +91,6 @@ export function PrinterSettings() {
         minute: '2-digit',
       });
 
-      // Build test receipt
       let printData = INIT;
       printData += ALIGN_CENTER;
       printData += TEXT_DOUBLE + BOLD_ON;
@@ -116,37 +112,42 @@ export function PrinterSettings() {
       printData += FEED + FEED + FEED;
       printData += CUT;
 
-      // Wrap Cordova callbacks in Promises for safer error handling
-      const connectPrinter = (): Promise<void> => {
-        return new Promise((resolve, reject) => {
+      // Convert to bytes: some printers (termasuk EP58M) lebih stabil jika dikirim sebagai ArrayBuffer
+      const bytes = new TextEncoder().encode(printData);
+      const buffer = bytes.buffer;
+
+      const connectPrinter = (): Promise<void> =>
+        new Promise((resolve, reject) => {
           try {
+            // Clean stale connection first
+            if (typeof bt.disconnect === 'function') {
+              bt.disconnect(() => {}, () => {});
+            }
             bt.connect(
               savedPrinterAddress,
               () => resolve(),
-              (err: any) => reject(new Error(err || 'Gagal terhubung'))
+              (err: any) => reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'))
             );
           } catch (e) {
             reject(e);
           }
         });
-      };
 
-      const writeToPrinter = (data: string): Promise<void> => {
-        return new Promise((resolve, reject) => {
+      const writeToPrinter = (): Promise<void> =>
+        new Promise((resolve, reject) => {
           try {
             bt.write(
-              data,
+              buffer,
               () => resolve(),
-              (err: any) => reject(new Error(err || 'Gagal menulis'))
+              (err: any) => reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal menulis'))
             );
           } catch (e) {
             reject(e);
           }
         });
-      };
 
-      const disconnectPrinter = (): Promise<void> => {
-        return new Promise((resolve) => {
+      const disconnectPrinter = (): Promise<void> =>
+        new Promise((resolve) => {
           try {
             if (typeof bt.disconnect === 'function') {
               bt.disconnect(() => resolve(), () => resolve());
@@ -157,13 +158,11 @@ export function PrinterSettings() {
             resolve();
           }
         });
-      };
 
-      // Execute print sequence
       await connectPrinter();
-      await writeToPrinter(printData);
+      await writeToPrinter();
       await disconnectPrinter();
-      
+
       toast.success('Test print berhasil! Cek printer Anda.');
     } catch (error: any) {
       console.error('Test print error:', error);
@@ -350,12 +349,20 @@ export function PrinterSettings() {
     setSelectedDevice(device);
 
     try {
+      // Clean stale connection first (menghindari "already connected" / hang)
+      if (typeof bt.disconnect === 'function') {
+        try {
+          bt.disconnect(() => {}, () => {});
+        } catch {
+          // ignore
+        }
+      }
+
       bt.connect(
         device.address,
         () => {
           toast.success(`Berhasil terhubung ke ${device.name}`);
 
-          // Disconnect after test
           bt.disconnect(
             () => {
               savePrinter(device).finally(() => {
@@ -364,7 +371,6 @@ export function PrinterSettings() {
               });
             },
             () => {
-              // even if disconnect fails, still save
               savePrinter(device).finally(() => {
                 setConnecting(false);
                 setSelectedDevice(null);
@@ -373,15 +379,17 @@ export function PrinterSettings() {
           );
         },
         (error: any) => {
+          const errMsg = typeof error === 'string' ? error : error?.message || 'Unknown error';
           console.error('Error connecting to device:', error);
-          toast.error(`Gagal terhubung ke ${device.name}. Pastikan printer menyala dan dalam jangkauan.`);
+          toast.error(`Gagal terhubung ke ${device.name}: ${errMsg}`);
           setConnecting(false);
           setSelectedDevice(null);
         }
       );
-    } catch (error) {
+    } catch (error: any) {
+      const errMsg = typeof error === 'string' ? error : error?.message || 'Unknown error';
       console.error('Error connecting to device:', error);
-      toast.error(`Gagal terhubung ke ${device.name}. Pastikan printer menyala dan dalam jangkauan.`);
+      toast.error(`Gagal terhubung ke ${device.name}: ${errMsg}`);
       setConnecting(false);
       setSelectedDevice(null);
     }
