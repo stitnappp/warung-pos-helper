@@ -85,21 +85,6 @@ const getBluetoothSerial = (): any => {
   return null;
 };
 
-// Get Capacitor Bluetooth Printer plugin for SPP (Bluetooth Classic)
-let cachedCapacitorBTPrinter: any = null;
-const getCapacitorBluetoothPrinter = async (): Promise<any> => {
-  if (!isNative) return null;
-  if (cachedCapacitorBTPrinter) return cachedCapacitorBTPrinter;
-  try {
-    const { BluetoothPrinter } = await import('@kduma-autoid/capacitor-bluetooth-printer');
-    cachedCapacitorBTPrinter = BluetoothPrinter;
-    return BluetoothPrinter;
-  } catch (e) {
-    console.warn('[NativeBluetooth] Capacitor Bluetooth Printer not available:', e);
-    return null;
-  }
-};
-
 export function useNativeBluetoothPrinter() {
   const [state, setState] = useState<NativeBluetoothState>(() => {
     const savedPrinter = getSavedPrinter();
@@ -210,23 +195,7 @@ export function useNativeBluetoothPrinter() {
       return Array.from(map.values());
     };
 
-    // Method 1: Capacitor Bluetooth Printer (SPP - Bluetooth Classic)
-    const tryCapacitorBTPrinter = async (): Promise<BluetoothDevice[]> => {
-      try {
-        const btPrinter = await getCapacitorBluetoothPrinter();
-        if (!btPrinter || typeof btPrinter.list !== 'function') {
-          return [];
-        }
-        const result = await btPrinter.list();
-        console.log('[NativeBluetooth] Capacitor BT Printer list:', result);
-        return (result.devices || []).map((d: any) => normalizeDevice(d));
-      } catch (e) {
-        console.warn('[NativeBluetooth] Capacitor BT Printer list failed:', e);
-        return [];
-      }
-    };
-
-    // Method 2: Cordova BluetoothSerial
+    // Method 1: Cordova BluetoothSerial
     const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
       new Promise((resolve) => {
         const bt = getBluetoothSerial();
@@ -261,12 +230,7 @@ export function useNativeBluetoothPrinter() {
       });
 
     try {
-      const [capacitorDevs, cordovaDevs] = await Promise.all([
-        tryCapacitorBTPrinter(),
-        tryCordovaBTSerial(),
-      ]);
-
-      const devices = mergeDevices(capacitorDevs, cordovaDevs);
+      const devices = await tryCordovaBTSerial();
 
       setState(prev => ({
         ...prev,
