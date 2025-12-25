@@ -69,7 +69,7 @@ export function CheckoutDialog({
 
   const handleConfirm = () => {
     onConfirm({
-      tableId: tableId || undefined,
+      tableId: tableId && tableId !== 'none' ? tableId : undefined,
       customerName: customerName || undefined,
       paymentMethod,
       notes: notes || undefined,
