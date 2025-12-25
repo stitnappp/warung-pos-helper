@@ -335,21 +335,33 @@ export function PrinterSettings() {
       return;
     }
 
-    const onList = (deviceList: any[]) => {
-      const allDevices: BluetoothDevice[] = (deviceList || []).map((d: any) => ({
-        name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
-        address: d.address || d.macAddress || d.id || d.uuid || d.deviceId,
-        id: d.id || d.uuid || d.address || d.macAddress || d.deviceId,
-        class: d.class || d.deviceClass,
-      }));
+    const normalizeDevice = (d: any): BluetoothDevice => ({
+      name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
+      address: d.address || d.macAddress || d.id || d.uuid || d.deviceId || '',
+      id: d.id || d.uuid || d.address || d.macAddress || d.deviceId || '',
+      class: d.class || d.deviceClass,
+    });
 
-      const validDevices = allDevices.filter((d) => d.address && d.address.length > 0);
+    const mergeDevices = (existing: BluetoothDevice[], newDevices: BluetoothDevice[]): BluetoothDevice[] => {
+      const map = new Map<string, BluetoothDevice>();
+      [...existing, ...newDevices].forEach((d) => {
+        if (d.address && d.address.length > 0) {
+          map.set(d.address.toUpperCase(), d);
+        }
+      });
+      return Array.from(map.values());
+    };
+
+    let foundDevices: BluetoothDevice[] = [];
+
+    const finishScanning = (devs: BluetoothDevice[]) => {
+      const validDevices = devs.filter((d) => d.address && d.address.length > 0);
       setDevices(validDevices);
 
       if (validDevices.length > 0) {
         toast.success(`Ditemukan ${validDevices.length} perangkat Bluetooth`);
       } else {
-        const errorMsg = 'Tidak ada perangkat Bluetooth yang di-pair. Pair printer terlebih dahulu di Pengaturan → Bluetooth HP.';
+        const errorMsg = 'Tidak ada perangkat ditemukan. Pastikan printer sudah di-pair di Pengaturan → Bluetooth HP, atau gunakan Input Manual MAC Address.';
         setBluetoothError(errorMsg);
         toast.info(errorMsg);
       }
@@ -361,29 +373,90 @@ export function PrinterSettings() {
       console.error('Error scanning devices:', err);
       const errStr = typeof err === 'string' ? err : err?.message || '';
       
-      // Check for permission error specifically
       if (errStr.includes('BLUETOOTH_CONNECT') || errStr.includes('permission')) {
         const errorMsg = 'Izin Bluetooth diperlukan. Buka Pengaturan HP → Aplikasi → [App ini] → Izin → Aktifkan semua izin Bluetooth.';
         setBluetoothError(errorMsg);
         toast.error(errorMsg);
       } else {
-        const errorMsg = errStr || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
+        const errorMsg = errStr || 'Gagal mencari perangkat Bluetooth. Coba gunakan Input Manual MAC Address.';
         setBluetoothError(errorMsg);
         toast.error('Gagal mencari perangkat Bluetooth');
       }
-      setScanning(false);
+      finishScanning(foundDevices);
+    };
+
+    const doScan = () => {
+      // Method 1: list() - get paired devices
+      const tryList = (): Promise<BluetoothDevice[]> =>
+        new Promise((resolve) => {
+          if (typeof bt.list !== 'function') {
+            resolve([]);
+            return;
+          }
+          bt.list(
+            (deviceList: any[]) => {
+              console.log('[BT] list() returned:', deviceList);
+              resolve((deviceList || []).map(normalizeDevice));
+            },
+            (err: any) => {
+              console.warn('[BT] list() failed:', err);
+              resolve([]);
+            }
+          );
+        });
+
+      // Method 2: discoverUnpaired() - discover nearby unpaired devices (for some plugins)
+      const tryDiscoverUnpaired = (): Promise<BluetoothDevice[]> =>
+        new Promise((resolve) => {
+          if (typeof bt.discoverUnpaired !== 'function') {
+            resolve([]);
+            return;
+          }
+          // Set listener for discovered devices
+          const discovered: BluetoothDevice[] = [];
+          if (typeof bt.setDeviceDiscoveredListener === 'function') {
+            bt.setDeviceDiscoveredListener((device: any) => {
+              console.log('[BT] discovered:', device);
+              discovered.push(normalizeDevice(device));
+            });
+          }
+          bt.discoverUnpaired(
+            (deviceList: any[]) => {
+              console.log('[BT] discoverUnpaired() returned:', deviceList);
+              const listDevices = (deviceList || []).map(normalizeDevice);
+              resolve(mergeDevices(discovered, listDevices));
+            },
+            (err: any) => {
+              console.warn('[BT] discoverUnpaired() failed:', err);
+              resolve(discovered);
+            }
+          );
+          // Timeout in case discovery takes too long
+          setTimeout(() => resolve(discovered), 8000);
+        });
+
+      // Run scans in parallel
+      Promise.all([tryList(), tryDiscoverUnpaired()])
+        .then(([listDevs, discoverDevs]) => {
+          foundDevices = mergeDevices(listDevs, discoverDevs);
+          finishScanning(foundDevices);
+        })
+        .catch((e) => {
+          console.error('[BT] Scan error:', e);
+          finishScanning(foundDevices);
+        });
     };
 
     try {
       bt.isEnabled(
         () => {
-          bt.list(onList, onFail);
+          doScan();
         },
         () => {
           bt.enable(
             () => {
               toast.info('Mengaktifkan Bluetooth...');
-              setTimeout(() => bt.list(onList, onFail), 800);
+              setTimeout(() => doScan(), 1000);
             },
             () => {
               const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
