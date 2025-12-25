@@ -241,8 +241,12 @@ export default function Index() {
       {!mobileMenuOpen && (
         <CartSummaryBar
           cart={cart}
+          subtotal={subtotal}
           total={total}
+          onUpdateQuantity={updateQuantity}
+          onRemove={removeFromCart}
           onCheckout={() => setCheckoutOpen(true)}
+          onClear={clearCart}
           isProcessing={createOrder.isPending}
         />
       )}
