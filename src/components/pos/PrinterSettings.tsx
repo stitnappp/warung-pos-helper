@@ -16,12 +16,25 @@ interface BluetoothDevice {
   address: string;
   id: string;
   class?: number;
+  type?: string;
 }
 
 // Get BluetoothSerial from Cordova plugin (works with Capacitor)
 const getBluetoothSerial = (): any => {
   if (!Capacitor.isNativePlatform()) return null;
   return (window as any).bluetoothSerial || null;
+};
+
+// Get Capacitor Bluetooth Printer plugin for SPP (Bluetooth Classic)
+const getCapacitorBluetoothPrinter = async (): Promise<any> => {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const { BluetoothPrinter } = await import('@kduma-autoid/capacitor-bluetooth-printer');
+    return BluetoothPrinter;
+  } catch (e) {
+    console.warn('[BT] Capacitor Bluetooth Printer not available:', e);
+    return null;
+  }
 };
 
 export type PrinterDataMode = 'arraybuffer' | 'string';
@@ -313,14 +326,6 @@ export function PrinterSettings() {
       return;
     }
 
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      const errorMsg = 'Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.';
-      setBluetoothError(errorMsg);
-      toast.error(errorMsg);
-      return;
-    }
-
     setScanning(true);
     setDevices([]);
     setBluetoothError(null);
@@ -340,6 +345,7 @@ export function PrinterSettings() {
       address: d.address || d.macAddress || d.id || d.uuid || d.deviceId || '',
       id: d.id || d.uuid || d.address || d.macAddress || d.deviceId || '',
       class: d.class || d.deviceClass,
+      type: d.type,
     });
 
     const mergeDevices = (existing: BluetoothDevice[], newDevices: BluetoothDevice[]): BluetoothDevice[] => {
@@ -385,92 +391,87 @@ export function PrinterSettings() {
       finishScanning(foundDevices);
     };
 
-    const doScan = () => {
-      // Method 1: list() - get paired devices
-      const tryList = (): Promise<BluetoothDevice[]> =>
-        new Promise((resolve) => {
-          if (typeof bt.list !== 'function') {
-            resolve([]);
-            return;
-          }
-          bt.list(
-            (deviceList: any[]) => {
-              console.log('[BT] list() returned:', deviceList);
-              resolve((deviceList || []).map(normalizeDevice));
-            },
-            (err: any) => {
-              console.warn('[BT] list() failed:', err);
-              resolve([]);
-            }
-          );
-        });
-
-      // Method 2: discoverUnpaired() - discover nearby unpaired devices (for some plugins)
-      const tryDiscoverUnpaired = (): Promise<BluetoothDevice[]> =>
-        new Promise((resolve) => {
-          if (typeof bt.discoverUnpaired !== 'function') {
-            resolve([]);
-            return;
-          }
-          // Set listener for discovered devices
-          const discovered: BluetoothDevice[] = [];
-          if (typeof bt.setDeviceDiscoveredListener === 'function') {
-            bt.setDeviceDiscoveredListener((device: any) => {
-              console.log('[BT] discovered:', device);
-              discovered.push(normalizeDevice(device));
-            });
-          }
-          bt.discoverUnpaired(
-            (deviceList: any[]) => {
-              console.log('[BT] discoverUnpaired() returned:', deviceList);
-              const listDevices = (deviceList || []).map(normalizeDevice);
-              resolve(mergeDevices(discovered, listDevices));
-            },
-            (err: any) => {
-              console.warn('[BT] discoverUnpaired() failed:', err);
-              resolve(discovered);
-            }
-          );
-          // Timeout in case discovery takes too long
-          setTimeout(() => resolve(discovered), 8000);
-        });
-
-      // Run scans in parallel
-      Promise.all([tryList(), tryDiscoverUnpaired()])
-        .then(([listDevs, discoverDevs]) => {
-          foundDevices = mergeDevices(listDevs, discoverDevs);
-          finishScanning(foundDevices);
-        })
-        .catch((e) => {
-          console.error('[BT] Scan error:', e);
-          finishScanning(foundDevices);
-        });
+    // Method 1: Use Capacitor Bluetooth Printer plugin (SPP - Bluetooth Classic)
+    const tryCapacitorBTPrinter = async (): Promise<BluetoothDevice[]> => {
+      try {
+        const btPrinter = await getCapacitorBluetoothPrinter();
+        if (!btPrinter || typeof btPrinter.list !== 'function') {
+          console.log('[BT] Capacitor BT Printer not available');
+          return [];
+        }
+        const result = await btPrinter.list();
+        console.log('[BT] Capacitor BT Printer list() returned:', result);
+        return (result.devices || []).map((d: any) => normalizeDevice(d));
+      } catch (e) {
+        console.warn('[BT] Capacitor BT Printer list() failed:', e);
+        return [];
+      }
     };
 
-    try {
-      bt.isEnabled(
-        () => {
-          doScan();
-        },
-        () => {
-          bt.enable(
-            () => {
-              toast.info('Mengaktifkan Bluetooth...');
-              setTimeout(() => doScan(), 1000);
-            },
-            () => {
-              const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
-              setBluetoothError(errorMsg);
-              toast.error(errorMsg);
-              setScanning(false);
-            }
-          );
+    // Method 2: Use Cordova BluetoothSerial plugin
+    const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
+      new Promise((resolve) => {
+        const bt = getBluetoothSerial();
+        if (!bt || typeof bt.list !== 'function') {
+          resolve([]);
+          return;
         }
-      );
+        bt.list(
+          (deviceList: any[]) => {
+            console.log('[BT] Cordova BT Serial list() returned:', deviceList);
+            resolve((deviceList || []).map(normalizeDevice));
+          },
+          (err: any) => {
+            console.warn('[BT] Cordova BT Serial list() failed:', err);
+            resolve([]);
+          }
+        );
+      });
+
+    // Method 3: discoverUnpaired() from Cordova
+    const tryDiscoverUnpaired = (): Promise<BluetoothDevice[]> =>
+      new Promise((resolve) => {
+        const bt = getBluetoothSerial();
+        if (!bt || typeof bt.discoverUnpaired !== 'function') {
+          resolve([]);
+          return;
+        }
+        const discovered: BluetoothDevice[] = [];
+        if (typeof bt.setDeviceDiscoveredListener === 'function') {
+          bt.setDeviceDiscoveredListener((device: any) => {
+            console.log('[BT] discovered:', device);
+            discovered.push(normalizeDevice(device));
+          });
+        }
+        bt.discoverUnpaired(
+          (deviceList: any[]) => {
+            console.log('[BT] discoverUnpaired() returned:', deviceList);
+            const listDevices = (deviceList || []).map(normalizeDevice);
+            resolve(mergeDevices(discovered, listDevices));
+          },
+          (err: any) => {
+            console.warn('[BT] discoverUnpaired() failed:', err);
+            resolve(discovered);
+          }
+        );
+        setTimeout(() => resolve(discovered), 8000);
+      });
+
+    try {
+      // Run all scanning methods in parallel
+      const [capacitorDevs, cordovaDevs, discoveredDevs] = await Promise.all([
+        tryCapacitorBTPrinter(),
+        tryCordovaBTSerial(),
+        tryDiscoverUnpaired(),
+      ]);
+
+      foundDevices = mergeDevices(mergeDevices(capacitorDevs, cordovaDevs), discoveredDevs);
+      finishScanning(foundDevices);
     } catch (e) {
       onFail(e);
     }
   };
+
 
   const connectToDevice = async (device: BluetoothDevice) => {
     if (!isNative) {
