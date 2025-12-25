@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
-import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle, Link2 } from 'lucide-react';
+import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface BluetoothDevice {
   name: string;
@@ -14,6 +12,22 @@ interface BluetoothDevice {
   id: string;
   class?: number;
 }
+
+// Get BluetoothSerial plugin
+let BluetoothSerial: any = null;
+
+const initBluetoothPlugin = async () => {
+  if (!Capacitor.isNativePlatform()) return null;
+  
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    BluetoothSerial = registerPlugin('BluetoothSerial');
+    return BluetoothSerial;
+  } catch (error) {
+    console.error('Failed to init Bluetooth plugin:', error);
+    return null;
+  }
+};
 
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
@@ -25,11 +39,16 @@ export function PrinterSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
-  const [showManual, setShowManual] = useState(false);
-  const [manualAddress, setManualAddress] = useState('');
+  const [bluetoothError, setBluetoothError] = useState<string | null>(null);
 
   useEffect(() => {
-    setIsNative(Capacitor.isNativePlatform());
+    const isNativePlatform = Capacitor.isNativePlatform();
+    setIsNative(isNativePlatform);
+    
+    if (isNativePlatform) {
+      initBluetoothPlugin();
+    }
+    
     fetchSavedPrinter();
   }, []);
 
@@ -64,46 +83,76 @@ export function PrinterSettings() {
 
     setScanning(true);
     setDevices([]);
+    setBluetoothError(null);
 
     try {
-      // Access BluetoothSerial plugin dynamically using registerPlugin pattern
-      const { registerPlugin } = await import('@capacitor/core');
-      const BluetoothSerial = registerPlugin<any>('BluetoothSerial');
-
+      // Ensure plugin is initialized
       if (!BluetoothSerial) {
-        toast.error('Plugin Bluetooth tidak tersedia');
+        await initBluetoothPlugin();
+      }
+      
+      if (!BluetoothSerial) {
+        const errorMsg = 'Plugin BluetoothSerial tidak tersedia. Pastikan aplikasi sudah di-build dengan plugin yang benar.';
+        setBluetoothError(errorMsg);
+        toast.error(errorMsg);
         setScanning(false);
         return;
       }
 
       // Check if Bluetooth is enabled
-      const { enabled } = await BluetoothSerial.isEnabled();
-      if (!enabled) {
-        toast.error('Bluetooth tidak aktif. Silahkan aktifkan Bluetooth terlebih dahulu.');
-        setScanning(false);
-        return;
+      try {
+        const enabledResult = await BluetoothSerial.isEnabled();
+        console.log('Bluetooth enabled check:', enabledResult);
+        
+        if (!enabledResult?.enabled) {
+          // Try to enable Bluetooth
+          try {
+            await BluetoothSerial.enable();
+            toast.info('Mengaktifkan Bluetooth...');
+          } catch (enableError) {
+            const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
+            setBluetoothError(errorMsg);
+            toast.error(errorMsg);
+            setScanning(false);
+            return;
+          }
+        }
+      } catch (checkError) {
+        console.error('Error checking Bluetooth status:', checkError);
       }
 
       // Get paired devices
+      console.log('Fetching paired devices...');
       const result = await BluetoothSerial.list();
-      console.log('Paired devices:', result);
+      console.log('BluetoothSerial.list() result:', JSON.stringify(result));
 
-      if (result && result.devices && result.devices.length > 0) {
-        // Filter for printer-like devices (often have "Printer", "POS", "RPP", "Thermal" in name)
-        const allDevices: BluetoothDevice[] = result.devices.map((d: any) => ({
-          name: d.name || 'Unknown Device',
-          address: d.address || d.id,
-          id: d.id || d.address,
-          class: d.class,
+      // Handle different response formats
+      let deviceList: any[] = [];
+      if (result?.devices) {
+        deviceList = result.devices;
+      } else if (Array.isArray(result)) {
+        deviceList = result;
+      }
+
+      if (deviceList.length > 0) {
+        const allDevices: BluetoothDevice[] = deviceList.map((d: any) => ({
+          name: d.name || d.deviceName || 'Perangkat Tidak Dikenal',
+          address: d.address || d.macAddress || d.id || d.uuid,
+          id: d.id || d.uuid || d.address || d.macAddress,
+          class: d.class || d.deviceClass,
         }));
 
         setDevices(allDevices);
-        toast.success(`Ditemukan ${allDevices.length} perangkat Bluetooth yang sudah di-pair`);
+        toast.success(`Ditemukan ${allDevices.length} perangkat Bluetooth`);
       } else {
-        toast.info('Tidak ada perangkat Bluetooth yang di-pair. Silahkan pair printer terlebih dahulu di Pengaturan Bluetooth HP.');
+        const errorMsg = 'Tidak ada perangkat Bluetooth yang di-pair. Pair printer terlebih dahulu di Pengaturan → Bluetooth HP.';
+        setBluetoothError(errorMsg);
+        toast.info(errorMsg);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error scanning devices:', error);
+      const errorMsg = error?.message || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
+      setBluetoothError(errorMsg);
       toast.error('Gagal mencari perangkat Bluetooth');
     } finally {
       setScanning(false);
@@ -139,57 +188,6 @@ export function PrinterSettings() {
     } finally {
       setConnecting(false);
       setSelectedDevice(null);
-    }
-  };
-
-  const connectManualPrinter = async () => {
-    const cleanedAddress = manualAddress.trim().toUpperCase();
-    
-    // Validate MAC address format
-    const macRegex = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/;
-    if (!macRegex.test(cleanedAddress)) {
-      toast.error('Format MAC Address tidak valid. Contoh: 00:11:22:33:44:55');
-      return;
-    }
-
-    setConnecting(true);
-
-    try {
-      if (isNative) {
-        const { registerPlugin } = await import('@capacitor/core');
-        const BluetoothSerial = registerPlugin<any>('BluetoothSerial');
-
-        if (BluetoothSerial) {
-          // Try to connect
-          await BluetoothSerial.connect({ address: cleanedAddress });
-          toast.success('Berhasil terhubung ke printer');
-          await BluetoothSerial.disconnect();
-        }
-      }
-
-      // Save the printer
-      const device: BluetoothDevice = {
-        name: 'Printer Manual',
-        address: cleanedAddress,
-        id: cleanedAddress,
-      };
-      await savePrinter(device);
-      setManualAddress('');
-      setShowManual(false);
-    } catch (error) {
-      console.error('Error connecting to manual printer:', error);
-      // Still save even if connection fails (user might be in web mode or printer is off)
-      const device: BluetoothDevice = {
-        name: 'Printer Manual',
-        address: cleanedAddress,
-        id: cleanedAddress,
-      };
-      await savePrinter(device);
-      setManualAddress('');
-      setShowManual(false);
-      toast.info('MAC Address disimpan. Printer akan terhubung saat mencetak.');
-    } finally {
-      setConnecting(false);
     }
   };
 
@@ -326,47 +324,18 @@ export function PrinterSettings() {
           {scanning ? 'Mencari Printer...' : 'Cari Printer Bluetooth'}
         </Button>
 
-        {/* Manual MAC Address Input */}
-        <Collapsible open={showManual} onOpenChange={setShowManual}>
-          <CollapsibleTrigger asChild>
-            <Button variant="link" className="w-full text-primary">
-              <Link2 className="h-4 w-4 mr-2" />
-              {showManual ? 'Sembunyikan' : 'Koneksi Manual'}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-4 mt-4">
-            <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-3">
-              <p className="text-muted-foreground">
-                Masukkan MAC Address printer RPP02N Anda.
-                Lihat di Pengaturan Bluetooth HP → Pilih RPP02N → Lihat detail.
-              </p>
-              <div className="bg-muted rounded-lg p-3 font-mono text-sm">
-                Contoh: 00:11:22:33:44:55
+        {/* Bluetooth Error */}
+        {bluetoothError && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 text-sm">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-destructive">Error</p>
+                <p className="text-muted-foreground mt-1">{bluetoothError}</p>
               </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="00:11:22:33:44:55"
-                  value={manualAddress}
-                  onChange={(e) => setManualAddress(e.target.value.toUpperCase())}
-                  className="font-mono"
-                />
-              </div>
-              <Button
-                onClick={connectManualPrinter}
-                disabled={connecting || !manualAddress.trim()}
-                className="w-full"
-                variant="secondary"
-              >
-                {connecting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Bluetooth className="h-4 w-4 mr-2" />
-                )}
-                Hubungkan Printer
-              </Button>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
+          </div>
+        )}
 
         {!isNative && (
           <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 text-sm">
@@ -375,8 +344,8 @@ export function PrinterSettings() {
               <div>
                 <p className="font-medium text-yellow-600 dark:text-yellow-400">Mode Web</p>
                 <p className="text-muted-foreground mt-1">
-                  Fitur scan printer otomatis hanya tersedia di aplikasi Android.
-                  Gunakan "Koneksi Manual" untuk menyimpan MAC Address printer.
+                  Fitur scan printer hanya tersedia di aplikasi Android.
+                  Silahkan buka aplikasi Android untuk menggunakan fitur ini.
                 </p>
               </div>
             </div>
