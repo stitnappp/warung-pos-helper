@@ -25,18 +25,6 @@ const getBluetoothSerial = (): any => {
   return (window as any).bluetoothSerial || null;
 };
 
-// Get Capacitor Bluetooth Printer plugin for SPP (Bluetooth Classic)
-const getCapacitorBluetoothPrinter = async (): Promise<any> => {
-  if (!Capacitor.isNativePlatform()) return null;
-  try {
-    const { BluetoothPrinter } = await import('@kduma-autoid/capacitor-bluetooth-printer');
-    return BluetoothPrinter;
-  } catch (e) {
-    console.warn('[BT] Capacitor Bluetooth Printer not available:', e);
-    return null;
-  }
-};
-
 export type PrinterDataMode = 'arraybuffer' | 'string';
 export type PrinterPaperSize = '58mm' | '80mm';
 
@@ -391,24 +379,7 @@ export function PrinterSettings() {
       finishScanning(foundDevices);
     };
 
-    // Method 1: Use Capacitor Bluetooth Printer plugin (SPP - Bluetooth Classic)
-    const tryCapacitorBTPrinter = async (): Promise<BluetoothDevice[]> => {
-      try {
-        const btPrinter = await getCapacitorBluetoothPrinter();
-        if (!btPrinter || typeof btPrinter.list !== 'function') {
-          console.log('[BT] Capacitor BT Printer not available');
-          return [];
-        }
-        const result = await btPrinter.list();
-        console.log('[BT] Capacitor BT Printer list() returned:', result);
-        return (result.devices || []).map((d: any) => normalizeDevice(d));
-      } catch (e) {
-        console.warn('[BT] Capacitor BT Printer list() failed:', e);
-        return [];
-      }
-    };
-
-    // Method 2: Use Cordova BluetoothSerial plugin
+    // Method 1: Use Cordova BluetoothSerial plugin
     const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
       new Promise((resolve) => {
         const bt = getBluetoothSerial();
@@ -458,14 +429,13 @@ export function PrinterSettings() {
       });
 
     try {
-      // Run all scanning methods in parallel
-      const [capacitorDevs, cordovaDevs, discoveredDevs] = await Promise.all([
-        tryCapacitorBTPrinter(),
+      // Run scanning methods in parallel
+      const [cordovaDevs, discoveredDevs] = await Promise.all([
         tryCordovaBTSerial(),
         tryDiscoverUnpaired(),
       ]);
 
-      foundDevices = mergeDevices(mergeDevices(capacitorDevs, cordovaDevs), discoveredDevs);
+      foundDevices = mergeDevices(cordovaDevs, discoveredDevs);
       finishScanning(foundDevices);
     } catch (e) {
       onFail(e);
