@@ -203,7 +203,7 @@ export function useNativeBluetoothPrinter() {
 
       console.log('[Printer] Connecting to:', device.address);
       
-      const result = await plugin.connect({ address: device.address });
+      const result = await plugin.connect({ address: device.address, type: 'bluetooth' });
       
       if (result === null) {
         toast.error('Gagal terhubung. Pastikan printer menyala & dekat.');
@@ -287,7 +287,7 @@ export function useNativeBluetoothPrinter() {
 
       try {
         // Try to connect if not connected
-        const connectResult = await plugin.connect({ address: savedPrinter.address });
+        const connectResult = await plugin.connect({ address: savedPrinter.address, type: 'bluetooth' });
         if (connectResult === null) {
           throw new Error('Gagal terhubung ke printer');
         }

@@ -114,7 +114,7 @@ const connectToPrinterAddress = async (address: string) => {
 
   // connect() sometimes hangs on some Android builds; enforce a timeout so UI doesn't get stuck.
   await withTimeout(
-    plugin.connect({ address }),
+    plugin.connect({ address, type: 'bluetooth' }),
     12000,
     'Timeout koneksi printer. Pastikan izin "Perangkat di sekitar" aktif dan printer menyala.'
   );
