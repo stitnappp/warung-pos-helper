@@ -52,7 +52,7 @@ export function SalesReport() {
   };
 
   const { start, end } = getDateRange();
-  const { data, isLoading } = useSalesReport(start, end);
+  const { data, isLoading, error } = useSalesReport(start, end);
 
   const formatPrice = (value: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -98,6 +98,18 @@ export function SalesReport() {
         </div>
         <Skeleton className="h-80 rounded-lg" />
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="py-12">
+        <div className="text-center text-muted-foreground">
+          <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <p>Gagal memuat laporan</p>
+          <p className="text-sm">Silakan coba lagi nanti</p>
+        </div>
+      </Card>
     );
   }
 
