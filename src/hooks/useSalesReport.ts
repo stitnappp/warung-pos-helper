@@ -19,16 +19,20 @@ export function useSalesReport(startDate: Date, endDate: Date) {
   return useQuery({
     queryKey: ['salesReport', startDate.toISOString(), endDate.toISOString()],
     queryFn: async (): Promise<{ dailyData: SalesData[]; summary: SalesSummary }> => {
-      // Fetch completed orders within date range
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('status', 'completed')
-        .gte('created_at', startOfDay(startDate).toISOString())
-        .lte('created_at', endOfDay(endDate).toISOString())
-        .order('created_at', { ascending: true });
+      try {
+        // Fetch completed orders within date range
+        const { data: orders, error: ordersError } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('status', 'completed')
+          .gte('created_at', startOfDay(startDate).toISOString())
+          .lte('created_at', endOfDay(endDate).toISOString())
+          .order('created_at', { ascending: true });
 
-      if (ordersError) throw ordersError;
+        if (ordersError) {
+          console.error('[SalesReport] Error fetching orders:', ordersError);
+          throw ordersError;
+        }
 
       // Get order items for top items calculation
       const orderIds = orders?.map(o => o.id) || [];
@@ -100,6 +104,19 @@ export function useSalesReport(startDate: Date, endDate: Date) {
           topItems,
         },
       };
+      } catch (error) {
+        console.error('[SalesReport] Error:', error);
+        // Return empty data on error
+        return {
+          dailyData: [],
+          summary: {
+            totalRevenue: 0,
+            totalOrders: 0,
+            averageOrderValue: 0,
+            topItems: [],
+          },
+        };
+      }
     },
   });
 }
