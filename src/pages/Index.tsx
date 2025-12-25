@@ -8,6 +8,7 @@ import { useCart } from '@/hooks/useCart';
 import { useOrderNotifications } from '@/hooks/useOrderNotifications';
 import { MenuGrid } from '@/components/pos/MenuGrid';
 import { Cart } from '@/components/pos/Cart';
+import { CartSummaryBar } from '@/components/pos/CartSummaryBar';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { OrdersList } from '@/components/pos/OrdersList';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
@@ -235,17 +236,15 @@ export default function Index() {
         order={receiptOrder}
         onCompleteOrder={(orderId) => updateOrderStatus.mutate({ orderId, status: 'completed' })}
       />
-      {cart.length > 0 && !mobileMenuOpen && (
-        <div className="fixed bottom-4 right-4 lg:hidden">
-          <Button
-            size="lg"
-            className="gradient-primary rounded-full shadow-lg h-14 px-6"
-            onClick={() => setMobileMenuOpen(true)}
-          >
-            <Store className="h-5 w-5 mr-2" />
-            {cart.reduce((sum, item) => sum + item.quantity, 0)} item
-          </Button>
-        </div>
+
+      {/* Cart Summary Bar - Mobile */}
+      {!mobileMenuOpen && (
+        <CartSummaryBar
+          cart={cart}
+          total={total}
+          onCheckout={() => setCheckoutOpen(true)}
+          isProcessing={createOrder.isPending}
+        />
       )}
     </div>
   );
