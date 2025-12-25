@@ -64,40 +64,61 @@ const listPairedDevices = async (): Promise<BluetoothDevice[]> => {
 };
 
 // Request Bluetooth & Location permissions for Android 12+
+// Note: capacitor-thermal-printer will also request permissions internally on first call.
 const requestBluetoothPermissions = async (): Promise<boolean> => {
   if (!Capacitor.isNativePlatform()) return true;
-  
+
   try {
-    // Try capacitor-thermal-printer's requestPermissions first (handles Android 12+ properly)
     const plugin = await loadThermalPrinterPlugin();
-    if (plugin?.requestPermissions) {
-      console.log('[Printer] Requesting permissions via thermal printer plugin...');
-      await plugin.requestPermissions();
-      console.log('[Printer] Permissions granted via plugin');
-      return true;
+    if (!plugin) return true;
+
+    // Capacitor auto-injects these at runtime for plugins with @Permission annotations,
+    // but the library's TS types don't always include them.
+    const check = (plugin as any).checkPermissions;
+    const request = (plugin as any).requestPermissions;
+
+    if (typeof check === 'function' && typeof request === 'function') {
+      const status = await check();
+      const values = Object.values(status ?? {});
+      const hasDenied = values.some((v) => v === 'denied' || v === 'prompt');
+      if (hasDenied) {
+        await request();
+      }
     }
 
-    // Fallback: request via BluetoothSerial plugin (Cordova)
-    const bt = getBluetoothSerial();
-    if (bt && typeof bt.requestPermission === 'function') {
-      await new Promise<void>((resolve) => {
-        bt.requestPermission(
-          () => resolve(),
-          () => resolve()
-        );
-      });
-      return true;
-    }
-    
-    console.warn('[Permission] No permission API available, continuing anyway');
     return true;
   } catch (e) {
     console.error('[Permission] Error requesting permissions:', e);
-    return true; // Continue anyway
+    return true;
   }
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const withTimeout = async <T,>(promise: Promise<T>, ms: number, message: string) => {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
+};
+
+const connectToPrinterAddress = async (address: string) => {
+  const plugin = await loadThermalPrinterPlugin();
+  if (!plugin) throw new Error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
+
+  // connect() sometimes hangs on some Android builds; enforce a timeout so UI doesn't get stuck.
+  await withTimeout(
+    plugin.connect({ address }),
+    12000,
+    'Timeout koneksi printer. Pastikan izin "Perangkat di sekitar" aktif dan printer menyala.'
+  );
+};
 
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
@@ -110,11 +131,12 @@ export function PrinterSettings() {
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
   const [bluetoothError, setBluetoothError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualAddress, setManualAddress] = useState('');
   const [manualName, setManualName] = useState('');
   const [testPrinting, setTestPrinting] = useState(false);
-  
+
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
 
   // Test print using capacitor-thermal-printer (more stable)
@@ -132,26 +154,16 @@ export function PrinterSettings() {
     setTestPrinting(true);
 
     try {
-      // Request permissions first (required for Android 12+)
+      // Request permissions first (Android 12+)
       await requestBluetoothPermissions();
+      setConnectError(null);
+
+      console.log('[Printer] Connecting to:', savedPrinterAddress);
+      await connectToPrinterAddress(savedPrinterAddress.trim().toUpperCase());
 
       const plugin = await loadThermalPrinterPlugin();
       if (!plugin) {
         toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
-        setTestPrinting(false);
-        return;
-      }
-
-      // Connect to printer with Bluetooth Classic type
-      console.log('[Printer] Connecting to:', savedPrinterAddress);
-      try {
-        await plugin.connect({ 
-          address: savedPrinterAddress,
-          type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
-        });
-      } catch (connectError: any) {
-        console.error('[Printer] Connect error:', connectError);
-        toast.error('Gagal terhubung ke printer. Pastikan printer menyala dan dalam jangkauan.');
         setTestPrinting(false);
         return;
       }
@@ -309,10 +321,10 @@ export function PrinterSettings() {
         if (plugin.stopScan) await plugin.stopScan();
       }
 
-      
-      if ((paired.length === 0) && devices.length === 0) {
+
+      if (paired.length === 0) {
         const errorMsg =
-          'Bluetooth tidak menemukan perangkat. Jika printer sudah di-pair tapi tidak muncul, gunakan Input Manual MAC Address atau pastikan printer mode discoverable.';
+          'Bluetooth tidak menemukan perangkat. Jika printer sudah di-pair tapi tidak muncul, gunakan Input Manual MAC Address atau nyalakan mode discoverable di printer.';
         setBluetoothError(errorMsg);
         toast.info(errorMsg);
       } else {
@@ -345,23 +357,11 @@ export function PrinterSettings() {
     setSelectedDevice({ ...device, address });
 
     try {
-      // Request permissions first (required for Android 12+)
       await requestBluetoothPermissions();
-
-      const plugin = await loadThermalPrinterPlugin();
-      if (!plugin) {
-        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
-        setConnecting(false);
-        setSelectedDevice(null);
-        return;
-      }
+      setConnectError(null);
 
       console.log('[PrinterSettings] Connecting to:', address);
-
-      await plugin.connect({ 
-        address,
-        type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
-      });
+      await connectToPrinterAddress(address);
 
       await sleep(500);
 
@@ -371,7 +371,9 @@ export function PrinterSettings() {
       toast.success(`Printer tersimpan: ${device.name}`);
     } catch (error: any) {
       console.error('[PrinterSettings] connect error:', error);
-      toast.error(`Gagal terhubung: ${error?.message || 'Unknown error'}`);
+      const msg = String(error?.message || 'Gagal terhubung ke printer');
+      setConnectError(msg);
+      toast.error(`Gagal terhubung: ${msg}`);
     } finally {
       setConnecting(false);
       setSelectedDevice(null);
@@ -491,21 +493,10 @@ export function PrinterSettings() {
     toast.info(`Menghubungkan ke ${address}...`);
 
     try {
-      // Request permissions first (required for Android 12+)
       await requestBluetoothPermissions();
+      setConnectError(null);
 
-      const plugin = await loadThermalPrinterPlugin();
-      if (!plugin) {
-        toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
-        setConnecting(false);
-        return;
-      }
-
-      await plugin.connect({ 
-        address,
-        type: 'bluetooth' // Required for Bluetooth Classic printers like RPP02N
-      });
-
+      await connectToPrinterAddress(address);
       await sleep(500);
 
       const device: BluetoothDevice = {
@@ -523,7 +514,9 @@ export function PrinterSettings() {
       toast.success(`Berhasil terhubung ke ${name}! Printer tersimpan.`);
     } catch (error: any) {
       console.error('Direct connect error:', error);
-      toast.error(`Gagal koneksi: ${error?.message || 'Pastikan printer menyala dan sudah di-pair di Bluetooth HP'}`);
+      const msg = String(error?.message || 'Pastikan izin "Perangkat di sekitar" aktif dan printer menyala');
+      setConnectError(msg);
+      toast.error(`Gagal koneksi: ${msg}`);
     } finally {
       setConnecting(false);
     }
@@ -645,6 +638,22 @@ export function PrinterSettings() {
               <div>
                 <p className="font-medium text-destructive">Error</p>
                 <p className="text-muted-foreground mt-1">{bluetoothError}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Connection Error */}
+        {connectError && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 text-sm">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-destructive">Gagal Koneksi</p>
+                <p className="text-muted-foreground mt-1">{connectError}</p>
+                <p className="text-muted-foreground mt-2">
+                  Pastikan izin <span className="font-medium">Perangkat di sekitar</span> aktif, Bluetooth menyala, dan coba ulang.
+                </p>
               </div>
             </div>
           </div>
