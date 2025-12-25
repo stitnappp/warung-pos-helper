@@ -3,8 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { supabase } from '@/integrations/supabase/client';
-import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle } from 'lucide-react';
+import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle, ChevronDown, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 import { useAutoPrint } from '@/hooks/useAutoPrint';
@@ -43,6 +45,9 @@ export function PrinterSettings() {
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
   const [bluetoothError, setBluetoothError] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualAddress, setManualAddress] = useState('');
+  const [manualName, setManualName] = useState('');
   
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
 
@@ -318,6 +323,26 @@ export function PrinterSettings() {
     }
   };
 
+  const handleManualConnect = async () => {
+    // Validate MAC address format (XX:XX:XX:XX:XX:XX)
+    const macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+    if (!macRegex.test(manualAddress.trim())) {
+      toast.error('Format MAC Address tidak valid. Contoh: 00:11:22:33:44:55');
+      return;
+    }
+
+    const device: BluetoothDevice = {
+      name: manualName.trim() || 'Manual Printer',
+      address: manualAddress.trim().toUpperCase(),
+      id: manualAddress.trim().toUpperCase(),
+    };
+
+    await savePrinter(device);
+    setManualAddress('');
+    setManualName('');
+    setManualOpen(false);
+  };
+
   if (loading) {
     return (
       <Card className="bg-card/50 border-border/50">
@@ -474,6 +499,55 @@ export function PrinterSettings() {
             </div>
           </div>
         )}
+
+        {/* Manual MAC Address Input */}
+        <Collapsible open={manualOpen} onOpenChange={setManualOpen}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" className="w-full justify-between">
+              <span className="flex items-center gap-2">
+                <Link2 className="h-4 w-4" />
+                Input Manual MAC Address
+              </span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${manualOpen ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-3 space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="manual-name">Nama Printer (Opsional)</Label>
+              <Input
+                id="manual-name"
+                placeholder="Contoh: RPP02N"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="manual-address">MAC Address *</Label>
+              <Input
+                id="manual-address"
+                placeholder="Contoh: 00:11:22:33:44:55"
+                value={manualAddress}
+                onChange={(e) => setManualAddress(e.target.value)}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Lihat MAC Address di Pengaturan → Bluetooth → Info perangkat printer
+              </p>
+            </div>
+            <Button
+              onClick={handleManualConnect}
+              disabled={!manualAddress.trim() || saving}
+              className="w-full gradient-primary"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Link2 className="h-4 w-4 mr-2" />
+              )}
+              Simpan Printer Manual
+            </Button>
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Instructions */}
         <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-3">

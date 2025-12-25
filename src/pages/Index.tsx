@@ -13,9 +13,11 @@ import { CartSummaryBar } from '@/components/pos/CartSummaryBar';
 import { CheckoutDialog } from '@/components/pos/CheckoutDialog';
 import { OrdersList } from '@/components/pos/OrdersList';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
+import { PrinterSettings } from '@/components/pos/PrinterSettings';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Store, Settings, LogOut, Menu, X, LayoutDashboard } from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Store, Settings, LogOut, Menu, X, LayoutDashboard, Printer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Order } from '@/types/pos';
@@ -134,6 +136,24 @@ export default function Index() {
                 </Link>
               </Button>
             )}
+            
+            {/* Printer Settings Sheet */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" title="Pengaturan Printer">
+                  <Printer className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
+                <SheetHeader>
+                  <SheetTitle>Pengaturan Printer</SheetTitle>
+                </SheetHeader>
+                <div className="mt-4">
+                  <PrinterSettings />
+                </div>
+              </SheetContent>
+            </Sheet>
+            
             <Button variant="ghost" size="icon" asChild>
               <Link to="/admin">
                 <Settings className="h-4 w-4" />
