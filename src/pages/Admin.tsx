@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { 
@@ -325,23 +325,25 @@ function MenuDialog({
   const [imageUrl, setImageUrl] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
 
-  useState(() => {
-    if (editingItem) {
-      setName(editingItem.name);
-      setDescription(editingItem.description || '');
-      setPrice(editingItem.price.toString());
-      setCategoryId(editingItem.category_id || '');
-      setImageUrl(editingItem.image_url || '');
-      setIsAvailable(editingItem.is_available);
-    } else {
-      setName('');
-      setDescription('');
-      setPrice('');
-      setCategoryId('');
-      setImageUrl('');
-      setIsAvailable(true);
+  useEffect(() => {
+    if (open) {
+      if (editingItem) {
+        setName(editingItem.name);
+        setDescription(editingItem.description || '');
+        setPrice(editingItem.price.toString());
+        setCategoryId(editingItem.category_id || '');
+        setImageUrl(editingItem.image_url || '');
+        setIsAvailable(editingItem.is_available);
+      } else {
+        setName('');
+        setDescription('');
+        setPrice('');
+        setCategoryId('');
+        setImageUrl('');
+        setIsAvailable(true);
+      }
     }
-  });
+  }, [open, editingItem]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
