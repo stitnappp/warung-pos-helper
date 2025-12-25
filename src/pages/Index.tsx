@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useIsAdmin } from '@/hooks/useUserRole';
 import { useMenuItems, useMenuCategories } from '@/hooks/useMenuItems';
 import { useOrders, useCreateOrder, useUpdateOrderStatus } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
@@ -14,13 +15,14 @@ import { OrdersList } from '@/components/pos/OrdersList';
 import { ReceiptDialog } from '@/components/pos/ReceiptDialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Store, Settings, LogOut, Menu, X } from 'lucide-react';
+import { Store, Settings, LogOut, Menu, X, LayoutDashboard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Order } from '@/types/pos';
 
 export default function Index() {
   const { user, loading: authLoading, signOut } = useAuth();
+  const { isAdmin } = useIsAdmin();
   const { data: menuItems = [], isLoading: itemsLoading } = useMenuItems();
   const { data: categories = [], isLoading: categoriesLoading } = useMenuCategories();
   const { data: orders = [], isLoading: ordersLoading } = useOrders();
@@ -120,6 +122,13 @@ export default function Index() {
           </div>
           
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Button variant="ghost" size="icon" asChild title="Dashboard Admin">
+                <Link to="/admin-dashboard">
+                  <LayoutDashboard className="h-4 w-4" />
+                </Link>
+              </Button>
+            )}
             <Button variant="ghost" size="icon" asChild>
               <Link to="/admin">
                 <Settings className="h-4 w-4" />
