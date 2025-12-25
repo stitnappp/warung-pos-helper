@@ -53,95 +53,122 @@ export function PrinterSettings() {
       return;
     }
 
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync (cap sync) setelah install plugin.');
-      return;
-    }
-
     setTestPrinting(true);
 
-    // ESC/POS Commands
-    const ESC = '\x1B';
-    const GS = '\x1D';
-    const INIT = ESC + '@';
-    const ALIGN_CENTER = ESC + 'a' + '\x01';
-    const ALIGN_LEFT = ESC + 'a' + '\x00';
-    const BOLD_ON = ESC + 'E' + '\x01';
-    const BOLD_OFF = ESC + 'E' + '\x00';
-    const TEXT_DOUBLE = GS + '!' + '\x11';
-    const TEXT_NORMAL = GS + '!' + '\x00';
-    const CUT = GS + 'V' + '\x00';
-    const FEED = '\n';
-
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    const timeStr = now.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-    // Build test receipt
-    let printData = INIT;
-    printData += ALIGN_CENTER;
-    printData += TEXT_DOUBLE + BOLD_ON;
-    printData += '*** TEST PRINT ***' + FEED;
-    printData += TEXT_NORMAL + BOLD_OFF;
-    printData += FEED;
-    printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
-    printData += 'MAC: ' + savedPrinterAddress + FEED;
-    printData += FEED;
-    printData += '--------------------------------' + FEED;
-    printData += dateStr + ' ' + timeStr + FEED;
-    printData += '--------------------------------' + FEED;
-    printData += FEED;
-    printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
-    printData += 'Printer siap digunakan.' + FEED;
-    printData += FEED;
-    printData += ALIGN_LEFT;
-    printData += '================================' + FEED;
-    printData += FEED + FEED + FEED;
-    printData += CUT;
-
-    const safeDisconnect = () => {
-      try {
-        bt.disconnect(() => {}, () => {});
-      } catch {}
-    };
-
     try {
-      bt.connect(
-        savedPrinterAddress,
-        () => {
-          bt.write(
-            printData,
-            () => {
-              safeDisconnect();
-              toast.success('Test print berhasil! Cek printer Anda.');
-              setTestPrinting(false);
-            },
-            (writeError: any) => {
-              console.error('Test print write error:', writeError);
-              safeDisconnect();
-              toast.error('Gagal test print: gagal mengirim data ke printer');
-              setTestPrinting(false);
+      const bt = getBluetoothSerial();
+      if (!bt) {
+        toast.error('Plugin Bluetooth belum siap. Pastikan sudah run: npx cap sync android');
+        setTestPrinting(false);
+        return;
+      }
+
+      // Check if methods exist
+      if (typeof bt.connect !== 'function' || typeof bt.write !== 'function') {
+        toast.error('Plugin Bluetooth tidak lengkap. Rebuild aplikasi diperlukan.');
+        setTestPrinting(false);
+        return;
+      }
+
+      // ESC/POS Commands
+      const ESC = '\x1B';
+      const GS = '\x1D';
+      const INIT = ESC + '@';
+      const ALIGN_CENTER = ESC + 'a' + '\x01';
+      const ALIGN_LEFT = ESC + 'a' + '\x00';
+      const BOLD_ON = ESC + 'E' + '\x01';
+      const BOLD_OFF = ESC + 'E' + '\x00';
+      const TEXT_DOUBLE = GS + '!' + '\x11';
+      const TEXT_NORMAL = GS + '!' + '\x00';
+      const CUT = GS + 'V' + '\x00';
+      const FEED = '\n';
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+      const timeStr = now.toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      // Build test receipt
+      let printData = INIT;
+      printData += ALIGN_CENTER;
+      printData += TEXT_DOUBLE + BOLD_ON;
+      printData += '*** TEST PRINT ***' + FEED;
+      printData += TEXT_NORMAL + BOLD_OFF;
+      printData += FEED;
+      printData += 'Printer: ' + (savedPrinterName || 'Unknown') + FEED;
+      printData += 'MAC: ' + savedPrinterAddress + FEED;
+      printData += FEED;
+      printData += '--------------------------------' + FEED;
+      printData += dateStr + ' ' + timeStr + FEED;
+      printData += '--------------------------------' + FEED;
+      printData += FEED;
+      printData += BOLD_ON + 'Koneksi Berhasil!' + BOLD_OFF + FEED;
+      printData += 'Printer siap digunakan.' + FEED;
+      printData += FEED;
+      printData += ALIGN_LEFT;
+      printData += '================================' + FEED;
+      printData += FEED + FEED + FEED;
+      printData += CUT;
+
+      // Wrap Cordova callbacks in Promises for safer error handling
+      const connectPrinter = (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          try {
+            bt.connect(
+              savedPrinterAddress,
+              () => resolve(),
+              (err: any) => reject(new Error(err || 'Gagal terhubung'))
+            );
+          } catch (e) {
+            reject(e);
+          }
+        });
+      };
+
+      const writeToPrinter = (data: string): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          try {
+            bt.write(
+              data,
+              () => resolve(),
+              (err: any) => reject(new Error(err || 'Gagal menulis'))
+            );
+          } catch (e) {
+            reject(e);
+          }
+        });
+      };
+
+      const disconnectPrinter = (): Promise<void> => {
+        return new Promise((resolve) => {
+          try {
+            if (typeof bt.disconnect === 'function') {
+              bt.disconnect(() => resolve(), () => resolve());
+            } else {
+              resolve();
             }
-          );
-        },
-        (connectError: any) => {
-          console.error('Test print connect error:', connectError);
-          toast.error('Gagal test print: gagal terhubung ke printer');
-          setTestPrinting(false);
-        }
-      );
+          } catch {
+            resolve();
+          }
+        });
+      };
+
+      // Execute print sequence
+      await connectPrinter();
+      await writeToPrinter(printData);
+      await disconnectPrinter();
+      
+      toast.success('Test print berhasil! Cek printer Anda.');
     } catch (error: any) {
       console.error('Test print error:', error);
-      safeDisconnect();
-      toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala'));
+      toast.error('Gagal test print: ' + (error?.message || 'Pastikan printer menyala dan dalam jangkauan'));
+    } finally {
       setTestPrinting(false);
     }
   };
