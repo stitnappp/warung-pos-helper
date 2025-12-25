@@ -120,6 +120,16 @@ const connectToPrinterAddress = async (address: string) => {
   );
 };
 
+interface DiagnosticInfo {
+  isNativePlatform: boolean;
+  pluginLoaded: boolean;
+  pluginName: string | null;
+  bluetoothSerialAvailable: boolean;
+  lastAction: string;
+  lastError: string | null;
+  timestamp: string;
+}
+
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
   const [savedPrinterName, setSavedPrinterName] = useState('');
@@ -136,8 +146,26 @@ export function PrinterSettings() {
   const [manualAddress, setManualAddress] = useState('');
   const [manualName, setManualName] = useState('');
   const [testPrinting, setTestPrinting] = useState(false);
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<DiagnosticInfo>({
+    isNativePlatform: false,
+    pluginLoaded: false,
+    pluginName: null,
+    bluetoothSerialAvailable: false,
+    lastAction: 'Belum ada aksi',
+    lastError: null,
+    timestamp: new Date().toLocaleTimeString('id-ID'),
+  });
 
   const { autoPrintEnabled, loading: autoPrintLoading, toggleAutoPrint } = useAutoPrint();
+
+  const updateDiagnostic = (updates: Partial<DiagnosticInfo>) => {
+    setDiagnostic(prev => ({
+      ...prev,
+      ...updates,
+      timestamp: new Date().toLocaleTimeString('id-ID'),
+    }));
+  };
 
   // Test print using capacitor-thermal-printer (more stable)
   const testPrint = async () => {
@@ -222,10 +250,28 @@ export function PrinterSettings() {
     }
   };
 
+  // Run diagnostics on mount
   useEffect(() => {
     const isNativePlatform = Capacitor.isNativePlatform();
     setIsNative(isNativePlatform);
     fetchSavedPrinter();
+
+    // Run initial diagnostic
+    const runDiagnostic = async () => {
+      const btSerial = getBluetoothSerial();
+      const plugin = await loadThermalPrinterPlugin();
+      
+      updateDiagnostic({
+        isNativePlatform,
+        pluginLoaded: !!plugin,
+        pluginName: plugin ? 'capacitor-thermal-printer' : null,
+        bluetoothSerialAvailable: !!btSerial,
+        lastAction: 'Inisialisasi selesai',
+        lastError: null,
+      });
+    };
+
+    runDiagnostic();
   }, []);
 
   const fetchSavedPrinter = async () => {
@@ -297,18 +343,23 @@ export function PrinterSettings() {
   const scanForDevices = async () => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      updateDiagnostic({ lastAction: 'Scan: Bukan native platform', lastError: 'Hanya tersedia di APK' });
       return;
     }
 
     setScanning(true);
     setDevices([]);
     setBluetoothError(null);
+    updateDiagnostic({ lastAction: 'Memulai scan...', lastError: null });
 
     try {
+      updateDiagnostic({ lastAction: 'Meminta permission Bluetooth...' });
       await requestBluetoothPermissions();
+      updateDiagnostic({ lastAction: 'Permission OK. Mengambil paired devices...' });
 
       // 1) Paired devices (this is what users expect after pairing)
       const paired = await listPairedDevices();
+      updateDiagnostic({ lastAction: `Ditemukan ${paired.length} paired device(s)` });
       if (paired.length > 0) {
         setDevices(paired);
       }
@@ -316,24 +367,30 @@ export function PrinterSettings() {
       // 2) Nearby discovery (printer must be discoverable to appear here)
       const plugin = await loadThermalPrinterPlugin();
       if (plugin) {
+        updateDiagnostic({ lastAction: 'Memulai nearby scan (5 detik)...' });
         await plugin.startScan();
         await sleep(5000);
         if (plugin.stopScan) await plugin.stopScan();
+        updateDiagnostic({ lastAction: 'Nearby scan selesai' });
+      } else {
+        updateDiagnostic({ lastAction: 'Plugin tidak tersedia, skip nearby scan', lastError: 'Plugin null' });
       }
-
 
       if (paired.length === 0) {
         const errorMsg =
           'Bluetooth tidak menemukan perangkat. Jika printer sudah di-pair tapi tidak muncul, gunakan Input Manual MAC Address atau nyalakan mode discoverable di printer.';
         setBluetoothError(errorMsg);
+        updateDiagnostic({ lastAction: 'Scan selesai: 0 device', lastError: errorMsg });
         toast.info(errorMsg);
       } else {
+        updateDiagnostic({ lastAction: `Scan selesai: ${paired.length} device(s)` });
         toast.success('Daftar perangkat diperbarui');
       }
     } catch (error: any) {
       console.error('Error scanning devices:', error);
       const errorMsg = error?.message || 'Gagal membaca perangkat Bluetooth. Coba lagi.';
       setBluetoothError(errorMsg);
+      updateDiagnostic({ lastAction: 'Scan gagal', lastError: errorMsg });
       toast.error('Gagal membaca perangkat Bluetooth');
     } finally {
       setScanning(false);
@@ -344,22 +401,27 @@ export function PrinterSettings() {
   const connectToDevice = async (device: BluetoothDevice) => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      updateDiagnostic({ lastAction: 'Connect: Bukan native platform', lastError: 'Hanya tersedia di APK' });
       return;
     }
 
     const address = (device.address || '').trim().toUpperCase();
     if (!address) {
       toast.error('Alamat printer tidak valid');
+      updateDiagnostic({ lastAction: 'Connect: Alamat kosong', lastError: 'Address empty' });
       return;
     }
 
     setConnecting(true);
     setSelectedDevice({ ...device, address });
+    updateDiagnostic({ lastAction: `Menghubungkan ke ${address}...`, lastError: null });
 
     try {
+      updateDiagnostic({ lastAction: 'Meminta permission...' });
       await requestBluetoothPermissions();
       setConnectError(null);
 
+      updateDiagnostic({ lastAction: `Memanggil plugin.connect(${address})...` });
       console.log('[PrinterSettings] Connecting to:', address);
       await connectToPrinterAddress(address);
 
@@ -367,12 +429,14 @@ export function PrinterSettings() {
 
       // Save printer
       await savePrinter({ ...device, address, id: address });
+      updateDiagnostic({ lastAction: `Berhasil terhubung & tersimpan: ${device.name}` });
 
       toast.success(`Printer tersimpan: ${device.name}`);
     } catch (error: any) {
       console.error('[PrinterSettings] connect error:', error);
       const msg = String(error?.message || 'Gagal terhubung ke printer');
       setConnectError(msg);
+      updateDiagnostic({ lastAction: 'Connect gagal', lastError: msg });
       toast.error(`Gagal terhubung: ${msg}`);
     } finally {
       setConnecting(false);
@@ -478,11 +542,13 @@ export function PrinterSettings() {
     const macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
     if (!macRegex.test(manualAddress.trim())) {
       toast.error('Format MAC Address tidak valid. Contoh: 00:11:22:33:44:55');
+      updateDiagnostic({ lastAction: 'Direct Connect: Format MAC invalid', lastError: manualAddress });
       return;
     }
 
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      updateDiagnostic({ lastAction: 'Direct Connect: Bukan native', lastError: 'Hanya APK' });
       return;
     }
 
@@ -491,11 +557,14 @@ export function PrinterSettings() {
 
     setConnecting(true);
     toast.info(`Menghubungkan ke ${address}...`);
+    updateDiagnostic({ lastAction: `Direct Connect: ${address}...`, lastError: null });
 
     try {
+      updateDiagnostic({ lastAction: 'Meminta permission...' });
       await requestBluetoothPermissions();
       setConnectError(null);
 
+      updateDiagnostic({ lastAction: `Memanggil plugin.connect(${address})...` });
       await connectToPrinterAddress(address);
       await sleep(500);
 
@@ -511,11 +580,13 @@ export function PrinterSettings() {
       setManualName('');
       setManualOpen(false);
 
+      updateDiagnostic({ lastAction: `Berhasil terhubung & tersimpan: ${name}` });
       toast.success(`Berhasil terhubung ke ${name}! Printer tersimpan.`);
     } catch (error: any) {
       console.error('Direct connect error:', error);
       const msg = String(error?.message || 'Pastikan izin "Perangkat di sekitar" aktif dan printer menyala');
       setConnectError(msg);
+      updateDiagnostic({ lastAction: 'Direct Connect gagal', lastError: msg });
       toast.error(`Gagal koneksi: ${msg}`);
     } finally {
       setConnecting(false);
@@ -544,6 +615,55 @@ export function PrinterSettings() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Diagnostic Panel */}
+        <Collapsible open={diagnosticOpen} onOpenChange={setDiagnosticOpen}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="sm" className="w-full justify-between text-xs">
+              <span className="flex items-center gap-2">
+                <AlertCircle className="h-3 w-3" />
+                Status Diagnostik
+              </span>
+              <ChevronDown className={`h-3 w-3 transition-transform ${diagnosticOpen ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-2 font-mono">
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">Native Platform:</span>
+                <span className={diagnostic.isNativePlatform ? 'text-green-500' : 'text-red-500'}>
+                  {diagnostic.isNativePlatform ? '✓ Ya (APK)' : '✗ Tidak (Web)'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">Plugin Loaded:</span>
+                <span className={diagnostic.pluginLoaded ? 'text-green-500' : 'text-red-500'}>
+                  {diagnostic.pluginLoaded ? '✓ Ya' : '✗ Tidak'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">Plugin:</span>
+                <span>{diagnostic.pluginName || '-'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">BluetoothSerial:</span>
+                <span className={diagnostic.bluetoothSerialAvailable ? 'text-green-500' : 'text-yellow-500'}>
+                  {diagnostic.bluetoothSerialAvailable ? '✓ Ada' : '○ Tidak Ada'}
+                </span>
+              </div>
+              <div className="border-t pt-2 mt-2">
+                <p className="text-muted-foreground mb-1">Aksi Terakhir ({diagnostic.timestamp}):</p>
+                <p className="text-foreground">{diagnostic.lastAction}</p>
+              </div>
+              {diagnostic.lastError && (
+                <div className="border-t pt-2 mt-2">
+                  <p className="text-red-400 mb-1">Error:</p>
+                  <p className="text-red-300 break-all">{diagnostic.lastError}</p>
+                </div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
         {/* Auto Print Toggle */}
         <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border/50">
           <div className="space-y-0.5">
