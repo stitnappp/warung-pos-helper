@@ -21,9 +21,11 @@ interface ReceiptDialogProps {
   onClose: () => void;
   order: Order | null;
   onCompleteOrder?: (orderId: string) => void;
+  receivedAmount?: number;
+  changeAmount?: number;
 }
 
-export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: ReceiptDialogProps) {
+export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedAmount, changeAmount }: ReceiptDialogProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
   const { data: orderItems = [], isLoading } = useOrderItems(order?.id || '');
   const { data: tables = [] } = useTables();
@@ -147,7 +149,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
       if (!connected) return;
     }
 
-    const success = await bluetooth.printReceipt(order, orderItems, tableName);
+    const success = await bluetooth.printReceipt(order, orderItems, tableName, cashierName, receivedAmount, changeAmount);
     
     if (success) {
       setIsPrinted(true);
@@ -195,6 +197,8 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
                 items={orderItems}
                 tableName={tableName}
                 cashierName={cashierName}
+                receivedAmount={receivedAmount}
+                changeAmount={changeAmount}
               />
             </div>
           )}
