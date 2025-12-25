@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { CreditCard, Banknote, Wallet } from 'lucide-react';
+import { CreditCard, Banknote, Wallet, QrCode, Building } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface CheckoutDialogProps {
@@ -39,6 +39,8 @@ interface CheckoutDialogProps {
 
 const paymentMethods = [
   { id: 'cash', label: 'Tunai', icon: Banknote },
+  { id: 'qris', label: 'QRIS', icon: QrCode },
+  { id: 'transfer', label: 'Transfer', icon: Building },
   { id: 'card', label: 'Kartu', icon: CreditCard },
   { id: 'ewallet', label: 'E-Wallet', icon: Wallet },
 ];
@@ -131,14 +133,15 @@ export function CheckoutDialog({
           </div>
 
           {/* Payment Method */}
-          <div className="space-y-2">
+          <div className="space-y-3">
             <Label>Metode Pembayaran</Label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-5 gap-2">
               {paymentMethods.map(method => {
                 const Icon = method.icon;
                 return (
                   <Button
                     key={method.id}
+                    type="button"
                     variant={paymentMethod === method.id ? 'default' : 'outline'}
                     className={cn(
                       "flex flex-col gap-1 h-auto py-3",
@@ -146,8 +149,8 @@ export function CheckoutDialog({
                     )}
                     onClick={() => setPaymentMethod(method.id)}
                   >
-                    <Icon className="h-5 w-5" />
-                    <span className="text-xs">{method.label}</span>
+                    <Icon className="h-4 w-4" />
+                    <span className="text-[10px]">{method.label}</span>
                   </Button>
                 );
               })}
