@@ -34,7 +34,7 @@ export function CartSummaryBar({
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t shadow-lg lg:hidden">
+    <div className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t shadow-lg lg:hidden safe-bottom">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-2">
