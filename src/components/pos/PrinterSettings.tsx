@@ -676,6 +676,119 @@ export function PrinterSettings() {
     setManualOpen(false);
   };
 
+  // Koneksi langsung dengan test koneksi untuk Bluetooth Classic
+  const handleDirectConnect = async () => {
+    // Validate MAC address format (XX:XX:XX:XX:XX:XX)
+    const macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+    if (!macRegex.test(manualAddress.trim())) {
+      toast.error('Format MAC Address tidak valid. Contoh: 00:11:22:33:44:55');
+      return;
+    }
+
+    if (!isNative) {
+      toast.error('Fitur ini hanya tersedia di aplikasi Android');
+      return;
+    }
+
+    const bt = getBluetoothSerial();
+    if (!bt) {
+      toast.error('Plugin Bluetooth belum siap. Pastikan aplikasi Android sudah di-sync.');
+      return;
+    }
+
+    const address = manualAddress.trim().toUpperCase();
+    const name = manualName.trim() || 'Printer Bluetooth';
+
+    setConnecting(true);
+    toast.info(`Menghubungkan ke ${address}...`);
+
+    // Helper untuk disconnect aman
+    const safeDisconnect = (): Promise<void> =>
+      new Promise((resolve) => {
+        try {
+          if (typeof bt.disconnect !== 'function') {
+            resolve();
+            return;
+          }
+          bt.disconnect(() => resolve(), () => resolve());
+        } catch {
+          resolve();
+        }
+      });
+
+    // Helper untuk connect dengan timeout
+    const connectWithTimeout = (addr: string, timeoutMs: number = 15000): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error('Koneksi timeout. Pastikan printer menyala dan sudah di-pair.'));
+          }
+        }, timeoutMs);
+
+        try {
+          bt.connect(
+            addr,
+            () => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                resolve();
+              }
+            },
+            (err: any) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
+              }
+            }
+          );
+        } catch (e: any) {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(e);
+          }
+        }
+      });
+
+    try {
+      // Disconnect dulu jika ada koneksi lama
+      await safeDisconnect();
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Coba koneksi langsung ke MAC address
+      await connectWithTimeout(address, 15000);
+
+      // Tunggu koneksi stabil
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Sukses terkoneksi, disconnect dan simpan
+      await safeDisconnect();
+
+      const device: BluetoothDevice = {
+        name: name,
+        address: address,
+        id: address,
+      };
+
+      await savePrinter(device);
+      setManualAddress('');
+      setManualName('');
+      setManualOpen(false);
+
+      toast.success(`Berhasil terhubung ke ${name}! Printer tersimpan.`);
+    } catch (error: any) {
+      console.error('Direct connect error:', error);
+      await safeDisconnect().catch(() => {});
+      toast.error(`Gagal koneksi: ${error?.message || 'Pastikan printer menyala dan sudah di-pair di Bluetooth HP'}`);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   if (loading) {
     return (
       <Card className="bg-card/50 border-border/50">
@@ -916,12 +1029,18 @@ export function PrinterSettings() {
             <Button variant="outline" className="w-full justify-between">
               <span className="flex items-center gap-2">
                 <Link2 className="h-4 w-4" />
-                Input Manual MAC Address
+                Koneksi Langsung via MAC Address
               </span>
               <ChevronDown className={`h-4 w-4 transition-transform ${manualOpen ? 'rotate-180' : ''}`} />
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-3 space-y-3">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-sm">
+              <p className="text-blue-600 dark:text-blue-400 font-medium">Untuk Printer Bluetooth Classic (RPP02N, dll)</p>
+              <p className="text-muted-foreground mt-1">
+                Masukkan MAC Address printer yang sudah di-pair di Pengaturan Bluetooth HP.
+              </p>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="manual-name">Nama Printer (Opsional)</Label>
               <Input
@@ -941,21 +1060,36 @@ export function PrinterSettings() {
                 className="font-mono"
               />
               <p className="text-xs text-muted-foreground">
-                Lihat MAC Address di Pengaturan → Bluetooth → Info perangkat printer
+                Lihat MAC Address di Pengaturan HP → Bluetooth → Ketuk "i" pada perangkat printer
               </p>
             </div>
-            <Button
-              onClick={handleManualConnect}
-              disabled={!manualAddress.trim() || saving}
-              className="w-full gradient-primary"
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Link2 className="h-4 w-4 mr-2" />
-              )}
-              Simpan Printer Manual
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleDirectConnect}
+                disabled={!manualAddress.trim() || saving || connecting}
+                className="flex-1 gradient-primary"
+              >
+                {connecting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Bluetooth className="h-4 w-4 mr-2" />
+                )}
+                {connecting ? 'Menghubungkan...' : 'Test & Simpan'}
+              </Button>
+              <Button
+                onClick={handleManualConnect}
+                variant="outline"
+                disabled={!manualAddress.trim() || saving}
+                className="flex-1"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Link2 className="h-4 w-4 mr-2" />
+                )}
+                Simpan Saja
+              </Button>
+            </div>
           </CollapsibleContent>
         </Collapsible>
 
