@@ -202,6 +202,46 @@ export function PrinterSettings() {
     }
   };
 
+  // Request Bluetooth permissions for Android 12+
+  const requestBluetoothPermissions = async (): Promise<boolean> => {
+    const cordova = (window as any).cordova;
+    if (!cordova?.plugins?.permissions) {
+      // Try alternative method - some devices work without explicit permission request
+      return true;
+    }
+
+    const permissions = cordova.plugins.permissions;
+    const requiredPermissions = [
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.BLUETOOTH_SCAN',
+    ];
+
+    return new Promise((resolve) => {
+      permissions.checkPermission(
+        requiredPermissions[0],
+        (status: any) => {
+          if (status.hasPermission) {
+            resolve(true);
+          } else {
+            permissions.requestPermissions(
+              requiredPermissions,
+              (result: any) => {
+                resolve(result.hasPermission);
+              },
+              () => {
+                resolve(false);
+              }
+            );
+          }
+        },
+        () => {
+          // If permission check fails, try to proceed anyway
+          resolve(true);
+        }
+      );
+    });
+  };
+
   const scanForDevices = async () => {
     if (!isNative) {
       toast.error('Fitur ini hanya tersedia di aplikasi Android');
@@ -219,6 +259,16 @@ export function PrinterSettings() {
     setScanning(true);
     setDevices([]);
     setBluetoothError(null);
+
+    // Request permissions first for Android 12+
+    const hasPermission = await requestBluetoothPermissions();
+    if (!hasPermission) {
+      const errorMsg = 'Izin Bluetooth ditolak. Buka Pengaturan → Aplikasi → [Nama App] → Izin → Aktifkan Bluetooth.';
+      setBluetoothError(errorMsg);
+      toast.error(errorMsg);
+      setScanning(false);
+      return;
+    }
 
     const onList = (deviceList: any[]) => {
       const allDevices: BluetoothDevice[] = (deviceList || []).map((d: any) => ({
@@ -244,9 +294,18 @@ export function PrinterSettings() {
 
     const onFail = (err: any) => {
       console.error('Error scanning devices:', err);
-      const errorMsg = (typeof err === 'string' ? err : err?.message) || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
-      setBluetoothError(errorMsg);
-      toast.error('Gagal mencari perangkat Bluetooth');
+      const errStr = typeof err === 'string' ? err : err?.message || '';
+      
+      // Check for permission error specifically
+      if (errStr.includes('BLUETOOTH_CONNECT') || errStr.includes('permission')) {
+        const errorMsg = 'Izin Bluetooth diperlukan. Buka Pengaturan HP → Aplikasi → [App ini] → Izin → Aktifkan semua izin Bluetooth.';
+        setBluetoothError(errorMsg);
+        toast.error(errorMsg);
+      } else {
+        const errorMsg = errStr || 'Gagal mencari perangkat Bluetooth. Coba restart aplikasi.';
+        setBluetoothError(errorMsg);
+        toast.error('Gagal mencari perangkat Bluetooth');
+      }
       setScanning(false);
     };
 
