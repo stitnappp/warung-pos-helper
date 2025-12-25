@@ -488,51 +488,112 @@ export function PrinterSettings() {
       return;
     }
 
+    const address = (device.address || '').trim().toUpperCase();
+    if (!address) {
+      toast.error('Alamat printer tidak valid');
+      return;
+    }
+
     setConnecting(true);
-    setSelectedDevice(device);
+    setSelectedDevice({ ...device, address });
 
-    try {
-      // Clean stale connection first (menghindari "already connected" / hang)
-      if (typeof bt.disconnect === 'function') {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const safeDisconnect = (): Promise<void> =>
+      new Promise((resolve) => {
         try {
-          bt.disconnect(() => {}, () => {});
+          if (typeof bt.disconnect !== 'function') {
+            resolve();
+            return;
+          }
+          bt.disconnect(() => resolve(), () => resolve());
         } catch {
-          // ignore
+          resolve();
         }
-      }
+      });
 
-      bt.connect(
-        device.address,
-        () => {
-          toast.success(`Berhasil terhubung ke ${device.name}`);
+    const isConnected = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        try {
+          if (typeof bt.isConnected !== 'function') {
+            resolve(false);
+            return;
+          }
+          bt.isConnected(
+            () => resolve(true),
+            () => resolve(false)
+          );
+        } catch {
+          resolve(false);
+        }
+      });
 
-          bt.disconnect(
+    const connectWithTimeout = (addr: string, timeoutMs: number = 15000): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error('Koneksi timeout. Pastikan printer menyala dan sudah di-pair.'));
+          }
+        }, timeoutMs);
+
+        try {
+          bt.connect(
+            addr,
             () => {
-              savePrinter(device).finally(() => {
-                setConnecting(false);
-                setSelectedDevice(null);
-              });
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                resolve();
+              }
             },
-            () => {
-              savePrinter(device).finally(() => {
-                setConnecting(false);
-                setSelectedDevice(null);
-              });
+            (err: any) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                reject(new Error(typeof err === 'string' ? err : err?.message || 'Gagal terhubung'));
+              }
             }
           );
-        },
-        (error: any) => {
-          const errMsg = typeof error === 'string' ? error : error?.message || 'Unknown error';
-          console.error('Error connecting to device:', error);
-          toast.error(`Gagal terhubung ke ${device.name}: ${errMsg}`);
-          setConnecting(false);
-          setSelectedDevice(null);
+        } catch (e: any) {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(e);
+          }
         }
-      );
+      });
+
+    try {
+      console.log('[PrinterSettings] connect start', { address, name: device.name });
+
+      // Putuskan koneksi lama dulu (lebih aman daripada connect->disconnect cepat)
+      await safeDisconnect();
+      await sleep(400);
+
+      // Koneksi
+      await connectWithTimeout(address, 15000);
+      await sleep(600);
+
+      // Pastikan benar-benar connected
+      const ok = await isConnected();
+      console.log('[PrinterSettings] connect isConnected', ok);
+      if (!ok) throw new Error('Koneksi belum stabil. Coba ulangi.');
+
+      // Simpan printer
+      await savePrinter({ ...device, address, id: address });
+
+      // Beri jeda sebelum disconnect (menghindari crash di beberapa device)
+      await sleep(600);
+      await safeDisconnect();
+
+      toast.success(`Printer tersimpan: ${device.name}`);
     } catch (error: any) {
-      const errMsg = typeof error === 'string' ? error : error?.message || 'Unknown error';
-      console.error('Error connecting to device:', error);
-      toast.error(`Gagal terhubung ke ${device.name}: ${errMsg}`);
+      console.error('[PrinterSettings] connect error:', error);
+      await safeDisconnect().catch(() => {});
+      toast.error(`Gagal terhubung: ${error?.message || 'Unknown error'}`);
+    } finally {
       setConnecting(false);
       setSelectedDevice(null);
     }
@@ -711,24 +772,26 @@ export function PrinterSettings() {
     try {
       // Disconnect dulu jika ada koneksi lama
       await safeDisconnect();
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
 
       // Coba koneksi langsung ke MAC address
       await connectWithTimeout(address, 15000);
 
-      // Tunggu koneksi stabil
-      await new Promise((r) => setTimeout(r, 500));
-
-      // Sukses terkoneksi, disconnect dan simpan
-      await safeDisconnect();
+      // Tunggu koneksi stabil (hindari connect->disconnect terlalu cepat)
+      await new Promise((r) => setTimeout(r, 700));
 
       const device: BluetoothDevice = {
-        name: name,
-        address: address,
+        name,
+        address,
         id: address,
       };
 
       await savePrinter(device);
+
+      // Baru disconnect setelah tersimpan + jeda
+      await new Promise((r) => setTimeout(r, 600));
+      await safeDisconnect();
+
       setManualAddress('');
       setManualName('');
       setManualOpen(false);
