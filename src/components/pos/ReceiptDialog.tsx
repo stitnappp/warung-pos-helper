@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
 import {
   Dialog,
   DialogContent,
@@ -35,101 +34,68 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
     ? tables.find(t => t.id === order.table_id)?.table_number 
     : undefined;
 
-  // Check if native share is available (mobile apps)
-  const canShare = typeof navigator !== 'undefined' && 'share' in navigator && 'canShare' in navigator;
-
-  const captureReceiptAsImage = async (): Promise<Blob | null> => {
-    if (!receiptRef.current) return null;
-    
-    try {
-      const canvas = await html2canvas(receiptRef.current, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      });
-      
-      return new Promise((resolve) => {
-        canvas.toBlob((blob) => {
-          resolve(blob);
-        }, 'image/png', 1.0);
-      });
-    } catch (error) {
-      console.error('Error capturing receipt:', error);
-      return null;
-    }
-  };
-
   const handleShareReceipt = async () => {
-    if (!order) return;
+    if (!order || !receiptRef.current) return;
     
     setIsProcessing(true);
     
     try {
-      const blob = await captureReceiptAsImage();
-      
-      if (!blob) {
-        toast.error('Gagal membuat gambar struk');
-        return;
-      }
-      
-      const file = new File([blob], `struk-${order.id.slice(-6).toUpperCase()}.png`, {
-        type: 'image/png',
+      const html2canvasModule = await import('html2canvas');
+      const canvas = await html2canvasModule.default(receiptRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2,
       });
       
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      const dataUrl = canvas.toDataURL('image/png');
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      
+      const fileName = 'struk-' + order.id.slice(-6).toUpperCase() + '.png';
+      const file = new File([blob], fileName, { type: 'image/png' });
+      
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
-          title: `Struk #${order.id.slice(-6).toUpperCase()}`,
-          text: `Struk pesanan #${order.id.slice(-6).toUpperCase()} - Total: Rp ${order.total.toLocaleString('id-ID')}`,
+          title: 'Struk RM MINANG MAIMBAOE',
         });
-        
         setIsPrinted(true);
-        if (onCompleteOrder) {
-          onCompleteOrder(order.id);
-        }
+        if (onCompleteOrder) onCompleteOrder(order.id);
         toast.success('Struk berhasil dibagikan!');
       } else {
-        // Fallback to download if share is not available
-        handleDownloadReceipt();
+        downloadImage(dataUrl, fileName);
       }
-    } catch (error: any) {
-      if (error.name !== 'AbortError') {
-        console.error('Share error:', error);
-        toast.error('Gagal membagikan struk');
-      }
+    } catch (error) {
+      console.error('Share error:', error);
     } finally {
       setIsProcessing(false);
     }
   };
 
+  const downloadImage = (dataUrl: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = fileName;
+    link.click();
+    setIsPrinted(true);
+    if (order && onCompleteOrder) onCompleteOrder(order.id);
+    toast.success('Struk berhasil diunduh!');
+  };
+
   const handleDownloadReceipt = async () => {
-    if (!order) return;
+    if (!order || !receiptRef.current) return;
     
     setIsProcessing(true);
     
     try {
-      const blob = await captureReceiptAsImage();
+      const html2canvasModule = await import('html2canvas');
+      const canvas = await html2canvasModule.default(receiptRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+      });
       
-      if (!blob) {
-        toast.error('Gagal membuat gambar struk');
-        return;
-      }
-      
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `struk-${order.id.slice(-6).toUpperCase()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      setIsPrinted(true);
-      if (onCompleteOrder) {
-        onCompleteOrder(order.id);
-      }
-      toast.success('Struk berhasil diunduh!');
+      const dataUrl = canvas.toDataURL('image/png');
+      const fileName = 'struk-' + order.id.slice(-6).toUpperCase() + '.png';
+      downloadImage(dataUrl, fileName);
     } catch (error) {
       console.error('Download error:', error);
       toast.error('Gagal mengunduh struk');
@@ -139,84 +105,30 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
   };
 
   const handleBrowserPrint = () => {
-    if (!receiptRef.current) return;
+    if (!receiptRef.current || !order) return;
 
     const printContent = receiptRef.current.innerHTML;
     const printWindow = window.open('', '', 'width=350,height=600');
     
     if (printWindow) {
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Struk #${order?.id.slice(-6).toUpperCase()}</title>
-            <style>
-              * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-              }
-              body {
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                padding: 10px;
-                background: white;
-                color: black;
-              }
-              table {
-                width: 100%;
-                border-collapse: collapse;
-              }
-              th, td {
-                padding: 2px 0;
-              }
-              .text-center { text-align: center; }
-              .text-right { text-align: right; }
-              .text-left { text-align: left; }
-              .text-xs { font-size: 10px; }
-              .text-xl { font-size: 18px; }
-              .text-base { font-size: 14px; }
-              .font-bold { font-weight: bold; }
-              .capitalize { text-transform: capitalize; }
-              .border-b { border-bottom: 1px dashed #999; }
-              .border-t { border-top: 1px dashed #999; }
-              .pb-1 { padding-bottom: 4px; }
-              .pb-3 { padding-bottom: 12px; }
-              .pb-4 { padding-bottom: 16px; }
-              .pt-2 { padding-top: 8px; }
-              .pt-3 { padding-top: 12px; }
-              .mb-3 { margin-bottom: 12px; }
-              .mb-4 { margin-bottom: 16px; }
-              .mt-1 { margin-top: 4px; }
-              .mt-2 { margin-top: 8px; }
-              .mt-3 { margin-top: 12px; }
-              .mt-6 { margin-top: 24px; }
-              .py-1 { padding-top: 4px; padding-bottom: 4px; }
-              .pr-2 { padding-right: 8px; }
-              .space-y-1 > * + * { margin-top: 4px; }
-              .text-gray-500, .text-gray-600 { color: #666; }
-              .border-gray-300 { border-color: #ccc; }
-              .border-gray-400 { border-color: #999; }
-              .flex { display: flex; }
-              .justify-between { justify-content: space-between; }
-              @media print {
-                body { padding: 0; }
-              }
-            </style>
-          </head>
-          <body>
-            ${printContent}
-          </body>
-        </html>
-      `);
+      printWindow.document.write(
+        '<!DOCTYPE html><html><head><title>Struk</title>' +
+        '<style>*{margin:0;padding:0;box-sizing:border-box;}' +
+        'body{font-family:monospace;font-size:12px;padding:10px;background:white;color:black;}' +
+        'table{width:100%;border-collapse:collapse;}' +
+        '.text-center{text-align:center;}.text-right{text-align:right;}' +
+        '.font-bold{font-weight:bold;}.text-xs{font-size:10px;}.text-xl{font-size:18px;}' +
+        '.border-b{border-bottom:1px dashed #999;}.border-t{border-top:1px dashed #999;}' +
+        '.pb-4{padding-bottom:16px;}.mb-4{margin-bottom:16px;}.mt-1{margin-top:4px;}' +
+        '</style></head><body>' + printContent + '</body></html>'
+      );
       printWindow.document.close();
       printWindow.focus();
       printWindow.print();
       printWindow.close();
       
-      // Mark as printed and complete order
       setIsPrinted(true);
-      if (order && onCompleteOrder) {
+      if (onCompleteOrder) {
         onCompleteOrder(order.id);
         toast.success('Pesanan selesai!');
       }
@@ -234,7 +146,6 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
     const success = await bluetooth.printReceipt(order, orderItems, tableName);
     
     if (success) {
-      // Mark as printed and complete order
       setIsPrinted(true);
       if (onCompleteOrder) {
         onCompleteOrder(order.id);
@@ -249,6 +160,8 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
   };
 
   if (!order) return null;
+
+  const canShare = typeof navigator !== 'undefined' && 'share' in navigator;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -282,16 +195,13 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
           )}
         </div>
 
-        {/* Success Message */}
         {isPrinted && (
           <div className="bg-accent/20 text-accent-foreground p-3 rounded-lg text-center mb-2">
             <CheckCircle className="h-6 w-6 mx-auto mb-1 text-accent" />
             <p className="text-sm font-medium">Struk berhasil dicetak/dibagikan</p>
-            <p className="text-xs text-muted-foreground">Pesanan telah ditandai selesai</p>
           </div>
         )}
 
-        {/* Bluetooth Status */}
         {bluetooth.isSupported && !isPrinted && (
           <div className="flex items-center justify-between px-3 py-2 bg-muted/50 rounded-lg mb-2">
             <div className="flex items-center gap-2">
@@ -329,7 +239,6 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
             </Button>
           ) : (
             <>
-              {/* Primary Action: Share (for mobile) or Download */}
               {canShare ? (
                 <Button 
                   onClick={handleShareReceipt} 
@@ -341,7 +250,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
                   ) : (
                     <Share2 className="h-4 w-4 mr-2" />
                   )}
-                  Bagikan / Cetak ke Printer
+                  Bagikan / Cetak
                 </Button>
               ) : (
                 <Button 
@@ -359,13 +268,11 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
               )}
 
               <div className="grid grid-cols-2 gap-2">
-                {/* Browser Print */}
                 <Button onClick={handleBrowserPrint} disabled={isLoading} variant="secondary">
                   <Printer className="h-4 w-4 mr-2" />
                   Cetak Browser
                 </Button>
 
-                {/* Bluetooth Print */}
                 {bluetooth.isSupported && (
                   <Button 
                     onClick={handleBluetoothPrint} 
@@ -380,11 +287,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
                     ) : (
                       <Bluetooth className="h-4 w-4 mr-2" />
                     )}
-                    {bluetooth.isConnecting 
-                      ? 'Connecting...' 
-                      : bluetooth.isPrinting 
-                        ? 'Mencetak...'
-                        : 'Thermal'}
+                    Thermal
                   </Button>
                 )}
               </div>

@@ -216,13 +216,14 @@ export function useBluetoothPrinter() {
       data.push(...COMMANDS.ALIGN_CENTER);
       data.push(...COMMANDS.BOLD_ON);
       data.push(...COMMANDS.DOUBLE_HEIGHT);
-      data.push(...textToBytes('WARUNG POS' + LINE));
+      data.push(...textToBytes('RM MINANG MAIMBAOE' + LINE));
       
       // Address (normal size)
       data.push(...COMMANDS.NORMAL_SIZE);
       data.push(...COMMANDS.BOLD_OFF);
-      data.push(...textToBytes('Jl. Contoh No. 123' + LINE));
-      data.push(...textToBytes('Telp: 021-1234567' + LINE));
+      data.push(...textToBytes('Jln. Gatot Subroto no 10' + LINE));
+      data.push(...textToBytes('depan balai desa Losari Kidul' + LINE));
+      data.push(...textToBytes('Kec Losari Kab Cirebon' + LINE));
       data.push(...textToBytes(SEPARATOR + LINE));
 
       // Order info (left aligned)
