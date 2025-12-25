@@ -85,6 +85,21 @@ const getBluetoothSerial = (): any => {
   return null;
 };
 
+// Get Capacitor Bluetooth Printer plugin for SPP (Bluetooth Classic)
+let cachedCapacitorBTPrinter: any = null;
+const getCapacitorBluetoothPrinter = async (): Promise<any> => {
+  if (!isNative) return null;
+  if (cachedCapacitorBTPrinter) return cachedCapacitorBTPrinter;
+  try {
+    const { BluetoothPrinter } = await import('@kduma-autoid/capacitor-bluetooth-printer');
+    cachedCapacitorBTPrinter = BluetoothPrinter;
+    return BluetoothPrinter;
+  } catch (e) {
+    console.warn('[NativeBluetooth] Capacitor Bluetooth Printer not available:', e);
+    return null;
+  }
+};
+
 export function useNativeBluetoothPrinter() {
   const [state, setState] = useState<NativeBluetoothState>(() => {
     const savedPrinter = getSavedPrinter();
@@ -176,70 +191,102 @@ export function useNativeBluetoothPrinter() {
   }, []);
 
   const scanDevices = useCallback(async () => {
-    const bt = getBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth tidak tersedia. Pastikan aplikasi sudah di-build dengan plugin.');
-      return [];
-    }
-
     setState(prev => ({ ...prev, isScanning: true, devices: [] }));
 
-    return new Promise<BluetoothDevice[]>((resolve) => {
-      // First check if bluetooth is enabled
-      bt.isEnabled(
-        () => {
-          // Bluetooth is enabled, get paired devices
-          bt.list(
-            (deviceList: any[]) => {
-              console.log('[NativeBluetooth] Paired devices:', deviceList);
-              
-              const devices: BluetoothDevice[] = (deviceList || []).map((d: any) => ({
-                name: d.name || 'Unknown Device',
-                address: d.address || d.id,
-                id: d.address || d.id,
-                class: d.class,
-              }));
-              
-              setState(prev => ({ 
-                ...prev, 
-                devices: devices,
-                isScanning: false 
-              }));
-
-              if (devices.length === 0) {
-                toast.info('Tidak ada perangkat Bluetooth ditemukan. Pastikan printer sudah di-pair di Pengaturan HP.');
-              } else {
-                toast.success(`Ditemukan ${devices.length} perangkat`);
-              }
-
-              resolve(devices);
-            },
-            (error: any) => {
-              console.error('[NativeBluetooth] List error:', error);
-              toast.error('Gagal mendapatkan daftar perangkat');
-              setState(prev => ({ ...prev, isScanning: false }));
-              resolve([]);
-            }
-          );
-        },
-        () => {
-          // Bluetooth is not enabled, try to enable it
-          bt.enable(
-            () => {
-              toast.info('Bluetooth diaktifkan, mencari perangkat...');
-              // Retry scan after enabling
-              setTimeout(() => scanDevices().then(resolve), 500);
-            },
-            (error: any) => {
-              console.error('[NativeBluetooth] Enable error:', error);
-              toast.error('Gagal mengaktifkan Bluetooth. Aktifkan manual di Pengaturan HP.');
-              setState(prev => ({ ...prev, isScanning: false }));
-              resolve([]);
-            }
-          );
-        }
-      );
+    const normalizeDevice = (d: any): BluetoothDevice => ({
+      name: d.name || d.deviceName || d.localName || 'Unknown Device',
+      address: d.address || d.macAddress || d.id || '',
+      id: d.address || d.macAddress || d.id || '',
+      class: d.class || d.deviceClass,
     });
+
+    const mergeDevices = (existing: BluetoothDevice[], newDevices: BluetoothDevice[]): BluetoothDevice[] => {
+      const map = new Map<string, BluetoothDevice>();
+      [...existing, ...newDevices].forEach((d) => {
+        if (d.address && d.address.length > 0) {
+          map.set(d.address.toUpperCase(), d);
+        }
+      });
+      return Array.from(map.values());
+    };
+
+    // Method 1: Capacitor Bluetooth Printer (SPP - Bluetooth Classic)
+    const tryCapacitorBTPrinter = async (): Promise<BluetoothDevice[]> => {
+      try {
+        const btPrinter = await getCapacitorBluetoothPrinter();
+        if (!btPrinter || typeof btPrinter.list !== 'function') {
+          return [];
+        }
+        const result = await btPrinter.list();
+        console.log('[NativeBluetooth] Capacitor BT Printer list:', result);
+        return (result.devices || []).map((d: any) => normalizeDevice(d));
+      } catch (e) {
+        console.warn('[NativeBluetooth] Capacitor BT Printer list failed:', e);
+        return [];
+      }
+    };
+
+    // Method 2: Cordova BluetoothSerial
+    const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
+      new Promise((resolve) => {
+        const bt = getBluetoothSerial();
+        if (!bt || typeof bt.list !== 'function') {
+          resolve([]);
+          return;
+        }
+        bt.isEnabled(
+          () => {
+            bt.list(
+              (deviceList: any[]) => {
+                console.log('[NativeBluetooth] Cordova BT Serial list:', deviceList);
+                resolve((deviceList || []).map(normalizeDevice));
+              },
+              () => resolve([])
+            );
+          },
+          () => {
+            bt.enable(
+              () => {
+                setTimeout(() => {
+                  bt.list(
+                    (deviceList: any[]) => resolve((deviceList || []).map(normalizeDevice)),
+                    () => resolve([])
+                  );
+                }, 500);
+              },
+              () => resolve([])
+            );
+          }
+        );
+      });
+
+    try {
+      const [capacitorDevs, cordovaDevs] = await Promise.all([
+        tryCapacitorBTPrinter(),
+        tryCordovaBTSerial(),
+      ]);
+
+      const devices = mergeDevices(capacitorDevs, cordovaDevs);
+
+      setState(prev => ({
+        ...prev,
+        devices,
+        isScanning: false,
+      }));
+
+      if (devices.length === 0) {
+        toast.info('Tidak ada perangkat Bluetooth ditemukan. Pastikan printer sudah di-pair di Pengaturan HP.');
+      } else {
+        toast.success(`Ditemukan ${devices.length} perangkat`);
+      }
+
+      return devices;
+    } catch (e) {
+      console.error('[NativeBluetooth] Scan error:', e);
+      toast.error('Gagal mencari perangkat Bluetooth');
+      setState(prev => ({ ...prev, isScanning: false }));
+      return [];
+    }
   }, []);
 
   const connect = useCallback(async (device: BluetoothDevice) => {
