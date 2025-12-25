@@ -51,7 +51,14 @@ serve(async (req) => {
     message += `💰 *Total:* ${formatPrice(order.total)}\n`;
     
     if (order.paymentMethod) {
-      message += `💳 *Pembayaran:* ${order.paymentMethod}\n`;
+      const paymentLabels: Record<string, string> = {
+        cash: 'Tunai',
+        qris: 'QRIS',
+        transfer: 'Transfer',
+        card: 'Kartu',
+        ewallet: 'E-Wallet',
+      };
+      message += `💳 *Pembayaran:* ${paymentLabels[order.paymentMethod] || order.paymentMethod}\n`;
     }
 
     if (order.items && order.items.length > 0) {

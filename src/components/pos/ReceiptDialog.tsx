@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -7,10 +7,12 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Receipt } from './Receipt';
-import { Order, OrderItem } from '@/types/pos';
+import { Order } from '@/types/pos';
 import { useOrderItems } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
-import { Printer, X, Loader2 } from 'lucide-react';
+import { useBluetoothPrinter } from '@/hooks/useBluetoothPrinter';
+import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ReceiptDialogProps {
   open: boolean;
@@ -22,12 +24,13 @@ export function ReceiptDialog({ open, onClose, order }: ReceiptDialogProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
   const { data: orderItems = [], isLoading } = useOrderItems(order?.id || '');
   const { data: tables = [] } = useTables();
+  const bluetooth = useBluetoothPrinter();
 
   const tableName = order?.table_id 
     ? tables.find(t => t.id === order.table_id)?.table_number 
     : undefined;
 
-  const handlePrint = () => {
+  const handleBrowserPrint = () => {
     if (!receiptRef.current) return;
 
     const printContent = receiptRef.current.innerHTML;
@@ -105,6 +108,17 @@ export function ReceiptDialog({ open, onClose, order }: ReceiptDialogProps) {
     }
   };
 
+  const handleBluetoothPrint = async () => {
+    if (!order) return;
+
+    if (!bluetooth.isConnected) {
+      const connected = await bluetooth.connect();
+      if (!connected) return;
+    }
+
+    await bluetooth.printReceipt(order, orderItems, tableName);
+  };
+
   if (!order) return null;
 
   return (
@@ -124,7 +138,7 @@ export function ReceiptDialog({ open, onClose, order }: ReceiptDialogProps) {
               Memuat data...
             </div>
           ) : (
-            <div className="border rounded-lg overflow-hidden shadow-sm">
+            <div className="border rounded-lg overflow-hidden shadow-sm max-h-[50vh] overflow-y-auto">
               <Receipt
                 ref={receiptRef}
                 order={order}
@@ -135,15 +149,72 @@ export function ReceiptDialog({ open, onClose, order }: ReceiptDialogProps) {
           )}
         </div>
 
-        <div className="flex gap-2 justify-end">
+        {/* Bluetooth Status */}
+        {bluetooth.isSupported && (
+          <div className="flex items-center justify-between px-3 py-2 bg-muted/50 rounded-lg mb-2">
+            <div className="flex items-center gap-2">
+              {bluetooth.isConnected ? (
+                <BluetoothConnected className="h-4 w-4 text-accent" />
+              ) : (
+                <BluetoothOff className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span className="text-sm">
+                {bluetooth.isConnecting 
+                  ? 'Menghubungkan...' 
+                  : bluetooth.isConnected 
+                    ? 'Printer terhubung'
+                    : 'Printer tidak terhubung'}
+              </span>
+            </div>
+            {bluetooth.isConnected && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={bluetooth.disconnect}
+                className="text-xs h-7"
+              >
+                Putuskan
+              </Button>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 justify-end flex-wrap">
           <Button variant="outline" onClick={onClose}>
             <X className="h-4 w-4 mr-2" />
             Tutup
           </Button>
-          <Button onClick={handlePrint} disabled={isLoading} className="gradient-primary">
+          
+          {/* Browser Print */}
+          <Button onClick={handleBrowserPrint} disabled={isLoading} variant="secondary">
             <Printer className="h-4 w-4 mr-2" />
-            Cetak Struk
+            Cetak Browser
           </Button>
+
+          {/* Bluetooth Print */}
+          {bluetooth.isSupported && (
+            <Button 
+              onClick={handleBluetoothPrint} 
+              disabled={isLoading || bluetooth.isPrinting || bluetooth.isConnecting} 
+              className={cn(
+                "gradient-primary",
+                bluetooth.isConnected && "ring-2 ring-accent ring-offset-2"
+              )}
+            >
+              {bluetooth.isPrinting || bluetooth.isConnecting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Bluetooth className="h-4 w-4 mr-2" />
+              )}
+              {bluetooth.isConnecting 
+                ? 'Connecting...' 
+                : bluetooth.isPrinting 
+                  ? 'Mencetak...'
+                  : bluetooth.isConnected 
+                    ? 'Cetak Thermal'
+                    : 'Hubungkan Printer'}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
