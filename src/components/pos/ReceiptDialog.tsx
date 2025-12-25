@@ -11,6 +11,7 @@ import { Order } from '@/types/pos';
 import { useOrderItems } from '@/hooks/useOrders';
 import { useTables } from '@/hooks/useTables';
 import { useBluetoothPrinter } from '@/hooks/useBluetoothPrinter';
+import { useCurrentUserProfile } from '@/hooks/useUserProfile';
 import { Printer, X, Loader2, Bluetooth, BluetoothConnected, BluetoothOff, CheckCircle, Share2, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -26,6 +27,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
   const receiptRef = useRef<HTMLDivElement>(null);
   const { data: orderItems = [], isLoading } = useOrderItems(order?.id || '');
   const { data: tables = [] } = useTables();
+  const { data: currentUserProfile } = useCurrentUserProfile();
   const bluetooth = useBluetoothPrinter();
   const [isPrinted, setIsPrinted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -33,6 +35,8 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
   const tableName = order?.table_id 
     ? tables.find(t => t.id === order.table_id)?.table_number 
     : undefined;
+  
+  const cashierName = currentUserProfile?.full_name || undefined;
 
   const handleShareReceipt = async () => {
     if (!order || !receiptRef.current) return;
@@ -190,6 +194,7 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder }: Receipt
                 order={order}
                 items={orderItems}
                 tableName={tableName}
+                cashierName={cashierName}
               />
             </div>
           )}
