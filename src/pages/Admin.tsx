@@ -30,7 +30,6 @@ import { toast } from 'sonner';
 import { SalesReport } from '@/components/pos/SalesReport';
 import { TelegramSettings } from '@/components/pos/TelegramSettings';
 import { MidtransSettings } from '@/components/pos/MidtransSettings';
-import { PrinterSettings } from '@/components/pos/PrinterSettings';
 
 export default function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -278,7 +277,6 @@ export default function Admin() {
           {/* Settings Tab */}
           <TabsContent value="settings" className="space-y-6">
             <h2 className="text-xl font-semibold">Pengaturan</h2>
-            <PrinterSettings />
             <MidtransSettings />
             <TelegramSettings />
           </TabsContent>
