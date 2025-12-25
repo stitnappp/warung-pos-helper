@@ -36,6 +36,57 @@ const loadThermalPrinterPlugin = async (): Promise<any> => {
   }
 };
 
+// Request Bluetooth & Location permissions for Android 12+
+const requestBluetoothPermissions = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return true;
+  
+  try {
+    // Try capacitor-thermal-printer's requestPermissions first (handles Android 12+ properly)
+    const plugin = await loadThermalPrinterPlugin();
+    if (plugin?.requestPermissions) {
+      console.log('[Printer] Requesting permissions via thermal printer plugin...');
+      await plugin.requestPermissions();
+      console.log('[Printer] Permissions granted via plugin');
+      return true;
+    }
+    
+    // Fallback: Request via Android native cordova permissions plugin
+    if ((window as any).cordova?.plugins?.permissions) {
+      const permissionsPlugin = (window as any).cordova.plugins.permissions;
+      
+      // Android 12+ requires these specific permissions for Bluetooth
+      const permissions = [
+        'android.permission.BLUETOOTH',
+        'android.permission.BLUETOOTH_ADMIN', 
+        'android.permission.BLUETOOTH_SCAN',
+        'android.permission.BLUETOOTH_CONNECT',
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
+      ];
+      
+      for (const permission of permissions) {
+        await new Promise<void>((resolve) => {
+          permissionsPlugin.requestPermission(
+            permission,
+            (status: any) => {
+              console.log(`[Permission] ${permission}:`, status?.hasPermission ? 'granted' : 'denied');
+              resolve();
+            },
+            () => resolve()
+          );
+        });
+      }
+      return true;
+    }
+    
+    console.warn('[Permission] No permission API available, continuing anyway');
+    return true;
+  } catch (e) {
+    console.error('[Permission] Error requesting permissions:', e);
+    return true; // Continue anyway
+  }
+};
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function PrinterSettings() {
@@ -71,6 +122,9 @@ export function PrinterSettings() {
     setTestPrinting(true);
 
     try {
+      // Request permissions first (required for Android 12+)
+      await requestBluetoothPermissions();
+
       const plugin = await loadThermalPrinterPlugin();
       if (!plugin) {
         toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
@@ -187,6 +241,10 @@ export function PrinterSettings() {
     setBluetoothError(null);
 
     try {
+      // Request permissions first (required for Android 12+)
+      console.log('[Printer] Requesting Bluetooth permissions...');
+      await requestBluetoothPermissions();
+
       const plugin = await loadThermalPrinterPlugin();
       if (!plugin) {
         toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
@@ -254,6 +312,9 @@ export function PrinterSettings() {
     setSelectedDevice({ ...device, address });
 
     try {
+      // Request permissions first (required for Android 12+)
+      await requestBluetoothPermissions();
+
       const plugin = await loadThermalPrinterPlugin();
       if (!plugin) {
         toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
@@ -397,6 +458,9 @@ export function PrinterSettings() {
     toast.info(`Menghubungkan ke ${address}...`);
 
     try {
+      // Request permissions first (required for Android 12+)
+      await requestBluetoothPermissions();
+
       const plugin = await loadThermalPrinterPlugin();
       if (!plugin) {
         toast.error('Plugin printer tidak tersedia. Rebuild aplikasi diperlukan.');
