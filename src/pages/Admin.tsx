@@ -397,12 +397,12 @@ function MenuDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="category">Kategori</Label>
-            <Select value={categoryId} onValueChange={setCategoryId}>
+            <Select value={categoryId || "none"} onValueChange={(val) => setCategoryId(val === "none" ? "" : val)}>
               <SelectTrigger>
                 <SelectValue placeholder="Pilih kategori" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Tanpa Kategori</SelectItem>
+                <SelectItem value="none">Tanpa Kategori</SelectItem>
                 {categories.map(cat => (
                   <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                 ))}
