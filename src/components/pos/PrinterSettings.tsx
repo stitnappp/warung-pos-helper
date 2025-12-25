@@ -267,16 +267,56 @@ export function PrinterSettings() {
     }
   };
 
+  // Wait for deviceready before running diagnostics
+  const waitForDeviceReady = (): Promise<void> => {
+    return new Promise((resolve) => {
+      // Check if already ready (document has the event fired)
+      if ((document as any).deviceready) {
+        resolve();
+        return;
+      }
+      
+      // For native, wait for deviceready event
+      const onReady = () => {
+        (document as any).deviceready = true;
+        resolve();
+      };
+      
+      document.addEventListener('deviceready', onReady, { once: true });
+      
+      // Fallback timeout - if deviceready doesn't fire within 3s, proceed anyway
+      setTimeout(() => {
+        document.removeEventListener('deviceready', onReady);
+        resolve();
+      }, 3000);
+    });
+  };
+
   // Run diagnostics on mount
   useEffect(() => {
-    const isNativePlatform = Capacitor.isNativePlatform();
-    setIsNative(isNativePlatform);
     fetchSavedPrinter();
 
-    // Run initial diagnostic
+    // Run initial diagnostic after waiting for device ready
     const runDiagnostic = async () => {
+      updateDiagnostic({ lastAction: 'Menunggu deviceready...' });
+      
+      // Wait for Capacitor/Cordova to be ready
+      await waitForDeviceReady();
+      
+      // Small delay to ensure all plugins are registered
+      await sleep(500);
+      
+      const isNativePlatform = Capacitor.isNativePlatform();
+      setIsNative(isNativePlatform);
+      
       const platform = typeof Capacitor.getPlatform === 'function' ? Capacitor.getPlatform() : 'unknown';
       const capacitorAvailable = !!(window as any).Capacitor;
+      
+      // Log for debugging
+      console.log('[Diagnostic] Platform:', platform);
+      console.log('[Diagnostic] isNativePlatform:', isNativePlatform);
+      console.log('[Diagnostic] window.Capacitor:', capacitorAvailable);
+      
       const pluginAvailable =
         typeof (Capacitor as any).isPluginAvailable === 'function'
           ? (Capacitor as any).isPluginAvailable('CapacitorThermalPrinter')
@@ -284,6 +324,9 @@ export function PrinterSettings() {
 
       const btSerial = getBluetoothSerial();
       const plugin = await loadThermalPrinterPlugin();
+      
+      console.log('[Diagnostic] Plugin loaded:', !!plugin);
+      console.log('[Diagnostic] BluetoothSerial:', !!btSerial);
 
       updateDiagnostic({
         isNativePlatform,
