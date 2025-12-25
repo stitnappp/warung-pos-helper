@@ -16,14 +16,14 @@ export function useUserRole() {
         .from('user_roles')
         .select('role')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('Error fetching user role:', error);
         return null;
       }
 
-      return data?.role as AppRole;
+      return data?.role as AppRole || null;
     },
     enabled: !!user,
   });
