@@ -96,6 +96,36 @@ export function useCreateOrder() {
       
       if (itemsError) throw itemsError;
 
+      // Send Telegram notification
+      try {
+        console.log('[Telegram] Sending order notification...');
+        const { error: telegramError } = await supabase.functions.invoke('send-telegram-notification', {
+          body: {
+            order: {
+              orderId: order.id,
+              customerName: customerName || null,
+              total,
+              items: cart.map(item => ({
+                name: item.menuItem.name,
+                quantity: item.quantity,
+                price: item.menuItem.price,
+              })),
+              paymentMethod: paymentMethod || null,
+              notes: notes || null,
+            },
+          },
+        });
+        
+        if (telegramError) {
+          console.error('[Telegram] Error sending notification:', telegramError);
+        } else {
+          console.log('[Telegram] Notification sent successfully');
+        }
+      } catch (error) {
+        console.error('[Telegram] Failed to send notification:', error);
+        // Don't throw - we don't want to fail the order if Telegram fails
+      }
+
       return order;
     },
     onSuccess: () => {
