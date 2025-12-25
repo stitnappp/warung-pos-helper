@@ -94,14 +94,6 @@ export const Receipt = forwardRef<HTMLDivElement, ReceiptProps>(
 
         {/* Totals */}
         <div className="space-y-1 text-xs">
-          <div className="flex justify-between">
-            <span>Subtotal:</span>
-            <span>{formatPrice(order.subtotal)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Pajak (10%):</span>
-            <span>{formatPrice(order.tax)}</span>
-          </div>
           <div className="flex justify-between font-bold text-base border-t border-gray-400 pt-2 mt-2">
             <span>TOTAL:</span>
             <span>{formatPrice(order.total)}</span>
