@@ -25,6 +25,18 @@ const getBluetoothSerial = (): any => {
   return (window as any).bluetoothSerial || null;
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Some devices load Cordova plugins a bit late; retry a few times before giving up.
+const waitForBluetoothSerial = async (maxTries: number = 8): Promise<any | null> => {
+  for (let i = 0; i < maxTries; i++) {
+    const bt = getBluetoothSerial();
+    if (bt) return bt;
+    await sleep(350);
+  }
+  return null;
+};
+
 export function PrinterSettings() {
   const [savedPrinterAddress, setSavedPrinterAddress] = useState('');
   const [savedPrinterName, setSavedPrinterName] = useState('');
@@ -412,24 +424,49 @@ export function PrinterSettings() {
       finishScanning(foundDevices);
     };
 
-    // Method 1: Use Cordova BluetoothSerial plugin
+    // Method 1: Use Cordova BluetoothSerial plugin (paired devices)
     const tryCordovaBTSerial = (): Promise<BluetoothDevice[]> =>
       new Promise((resolve) => {
-        const bt = getBluetoothSerial();
-        if (!bt || typeof bt.list !== 'function') {
-          resolve([]);
-          return;
-        }
-        bt.list(
-          (deviceList: any[]) => {
-            console.log('[BT] Cordova BT Serial list() returned:', deviceList);
-            resolve((deviceList || []).map(normalizeDevice));
-          },
-          (err: any) => {
-            console.warn('[BT] Cordova BT Serial list() failed:', err);
+        (async () => {
+          const bt = await waitForBluetoothSerial();
+          if (!bt || typeof bt.list !== 'function') {
             resolve([]);
+            return;
           }
-        );
+
+          const runList = () =>
+            bt.list(
+              (deviceList: any[]) => {
+                console.log('[BT] Cordova BT Serial list() returned:', deviceList);
+                resolve((deviceList || []).map(normalizeDevice));
+              },
+              (err: any) => {
+                console.warn('[BT] Cordova BT Serial list() failed:', err);
+                resolve([]);
+              }
+            );
+
+          // Some Android devices require Bluetooth to be explicitly enabled first
+          if (typeof bt.isEnabled === 'function' && typeof bt.enable === 'function') {
+            try {
+              bt.isEnabled(
+                () => runList(),
+                () =>
+                  bt.enable(
+                    async () => {
+                      await sleep(600);
+                      runList();
+                    },
+                    () => resolve([])
+                  )
+              );
+            } catch {
+              runList();
+            }
+          } else {
+            runList();
+          }
+        })();
       });
 
     // Method 3: discoverUnpaired() from Cordova
