@@ -99,17 +99,22 @@ export function PrinterSettings() {
         return;
       }
 
+      console.log('BluetoothSerial plugin available:', Object.keys(BluetoothSerial));
+
       // Check if Bluetooth is enabled
       try {
         const enabledResult = await BluetoothSerial.isEnabled();
         console.log('Bluetooth enabled check:', enabledResult);
         
-        if (!enabledResult?.enabled) {
+        if (!enabledResult?.enabled && enabledResult !== true) {
           // Try to enable Bluetooth
           try {
             await BluetoothSerial.enable();
             toast.info('Mengaktifkan Bluetooth...');
+            // Wait a bit for Bluetooth to enable
+            await new Promise(resolve => setTimeout(resolve, 1000));
           } catch (enableError) {
+            console.error('Enable error:', enableError);
             const errorMsg = 'Bluetooth tidak aktif. Silahkan aktifkan Bluetooth di pengaturan HP.';
             setBluetoothError(errorMsg);
             toast.error(errorMsg);
@@ -119,31 +124,76 @@ export function PrinterSettings() {
         }
       } catch (checkError) {
         console.error('Error checking Bluetooth status:', checkError);
+        // Continue anyway, some plugins don't have isEnabled
       }
 
-      // Get paired devices
-      console.log('Fetching paired devices...');
-      const result = await BluetoothSerial.list();
-      console.log('BluetoothSerial.list() result:', JSON.stringify(result));
-
-      // Handle different response formats
+      // Try multiple methods to get paired devices
       let deviceList: any[] = [];
-      if (result?.devices) {
-        deviceList = result.devices;
-      } else if (Array.isArray(result)) {
-        deviceList = result;
+      
+      // Method 1: Try list() - most common
+      try {
+        console.log('Trying BluetoothSerial.list()...');
+        const listResult = await BluetoothSerial.list();
+        console.log('list() result:', JSON.stringify(listResult));
+        
+        if (listResult?.devices) {
+          deviceList = listResult.devices;
+        } else if (Array.isArray(listResult)) {
+          deviceList = listResult;
+        }
+      } catch (listError) {
+        console.log('list() failed:', listError);
       }
+
+      // Method 2: Try getBondedDevices() if list() didn't work
+      if (deviceList.length === 0) {
+        try {
+          console.log('Trying BluetoothSerial.getBondedDevices()...');
+          const bondedResult = await BluetoothSerial.getBondedDevices();
+          console.log('getBondedDevices() result:', JSON.stringify(bondedResult));
+          
+          if (bondedResult?.devices) {
+            deviceList = bondedResult.devices;
+          } else if (Array.isArray(bondedResult)) {
+            deviceList = bondedResult;
+          }
+        } catch (bondedError) {
+          console.log('getBondedDevices() failed:', bondedError);
+        }
+      }
+
+      // Method 3: Try getPairedDevices() as last resort
+      if (deviceList.length === 0) {
+        try {
+          console.log('Trying BluetoothSerial.getPairedDevices()...');
+          const pairedResult = await BluetoothSerial.getPairedDevices();
+          console.log('getPairedDevices() result:', JSON.stringify(pairedResult));
+          
+          if (pairedResult?.devices) {
+            deviceList = pairedResult.devices;
+          } else if (Array.isArray(pairedResult)) {
+            deviceList = pairedResult;
+          }
+        } catch (pairedError) {
+          console.log('getPairedDevices() failed:', pairedError);
+        }
+      }
+
+      console.log('Final device list:', deviceList);
 
       if (deviceList.length > 0) {
         const allDevices: BluetoothDevice[] = deviceList.map((d: any) => ({
-          name: d.name || d.deviceName || 'Perangkat Tidak Dikenal',
-          address: d.address || d.macAddress || d.id || d.uuid,
-          id: d.id || d.uuid || d.address || d.macAddress,
+          name: d.name || d.deviceName || d.localName || 'Perangkat Tidak Dikenal',
+          address: d.address || d.macAddress || d.id || d.uuid || d.deviceId,
+          id: d.id || d.uuid || d.address || d.macAddress || d.deviceId,
           class: d.class || d.deviceClass,
         }));
 
-        setDevices(allDevices);
-        toast.success(`Ditemukan ${allDevices.length} perangkat Bluetooth`);
+        // Filter out devices without valid address
+        const validDevices = allDevices.filter(d => d.address && d.address.length > 0);
+        
+        setDevices(validDevices);
+        toast.success(`Ditemukan ${validDevices.length} perangkat Bluetooth`);
       } else {
         const errorMsg = 'Tidak ada perangkat Bluetooth yang di-pair. Pair printer terlebih dahulu di Pengaturan → Bluetooth HP.';
         setBluetoothError(errorMsg);
@@ -397,8 +447,8 @@ export function PrinterSettings() {
             <li>Buka Pengaturan → Bluetooth di HP</li>
             <li>Pair/Sambungkan dengan printer "RPP02N"</li>
             <li>Kembali ke aplikasi ini</li>
-            <li>Tekan "Cari Printer Bluetooth" atau gunakan "Koneksi Manual"</li>
-            <li>Untuk koneksi manual: Lihat MAC Address di detail perangkat Bluetooth HP</li>
+            <li>Tekan "Cari Printer Bluetooth"</li>
+            <li>Pilih printer dari daftar yang muncul</li>
           </ol>
         </div>
 
