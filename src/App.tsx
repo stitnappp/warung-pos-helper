@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Admin from "./pages/Admin";
 import AdminDashboard from "./pages/AdminDashboard";
+import Kasir from "./pages/Kasir";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin-dashboard" element={<AdminDashboard />} />
+          <Route path="/kasir" element={<Kasir />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
