@@ -319,28 +319,19 @@ function MenuDialog({
   isLoading: boolean;
 }) {
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [categoryId, setCategoryId] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [isAvailable, setIsAvailable] = useState(true);
 
   useEffect(() => {
     if (open) {
       if (editingItem) {
         setName(editingItem.name);
-        setDescription(editingItem.description || '');
         setPrice(editingItem.price.toString());
         setCategoryId(editingItem.category_id || '');
-        setImageUrl(editingItem.image_url || '');
-        setIsAvailable(editingItem.is_available);
       } else {
         setName('');
-        setDescription('');
         setPrice('');
         setCategoryId('');
-        setImageUrl('');
-        setIsAvailable(true);
       }
     }
   }, [open, editingItem]);
@@ -350,11 +341,9 @@ function MenuDialog({
     
     const data = {
       name,
-      description: description || null,
       price: parseFloat(price),
       category_id: categoryId || null,
-      image_url: imageUrl || null,
-      is_available: isAvailable,
+      is_available: true,
     };
 
     try {
@@ -364,13 +353,9 @@ function MenuDialog({
         await onCreate(data);
       }
       onClose();
-      // Reset form
       setName('');
-      setDescription('');
       setPrice('');
       setCategoryId('');
-      setImageUrl('');
-      setIsAvailable(true);
     } catch (error) {
       // Error handled by mutation
     }
@@ -384,16 +369,8 @@ function MenuDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Nama Menu *</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="description">Deskripsi</Label>
-            <Textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="price">Harga *</Label>
-            <Input id="price" type="number" value={price} onChange={(e) => setPrice(e.target.value)} required min={0} />
+            <Label htmlFor="name">Nama Produk *</Label>
+            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Masukkan nama produk" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="category">Kategori</Label>
@@ -410,12 +387,8 @@ function MenuDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="imageUrl">URL Gambar</Label>
-            <Input id="imageUrl" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="available">Tersedia</Label>
-            <Switch id="available" checked={isAvailable} onCheckedChange={setIsAvailable} />
+            <Label htmlFor="price">Harga *</Label>
+            <Input id="price" type="number" value={price} onChange={(e) => setPrice(e.target.value)} required min={0} placeholder="Masukkan harga" />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
