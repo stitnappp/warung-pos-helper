@@ -6,28 +6,13 @@ import { Order, OrderItem } from '@/types/pos';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
 
-// ESC/POS Commands
-const ESC = 0x1b;
-const GS = 0x1d;
-
-const COMMANDS = {
-  INIT: [ESC, 0x40],
-  ALIGN_CENTER: [ESC, 0x61, 0x01],
-  ALIGN_LEFT: [ESC, 0x61, 0x00],
-  ALIGN_RIGHT: [ESC, 0x61, 0x02],
-  BOLD_ON: [ESC, 0x45, 0x01],
-  BOLD_OFF: [ESC, 0x45, 0x00],
-  DOUBLE_HEIGHT: [ESC, 0x21, 0x10],
-  NORMAL_SIZE: [ESC, 0x21, 0x00],
-  CUT_PAPER: [GS, 0x56, 0x00],
-  FEED_LINE: [ESC, 0x64, 0x02],
-};
+// Dynamic import for capacitor-thermal-printer
+let CapacitorThermalPrinter: any = null;
 
 interface BluetoothDevice {
   name: string;
   address: string;
   id: string;
-  class?: number;
 }
 
 interface NativeBluetoothState {
@@ -37,21 +22,18 @@ interface NativeBluetoothState {
   connectedDevice: BluetoothDevice | null;
   devices: BluetoothDevice[];
   isScanning: boolean;
-  dataMode: 'string';
   paperSize: '58mm' | '80mm';
 }
 
 const STORAGE_KEY = 'connected_printer';
 const isNative = Capacitor.isNativePlatform();
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 const getSavedPrinter = (): BluetoothDevice | null => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) return JSON.parse(saved);
   } catch (e) {
-    console.error('[NativeBluetooth] Failed to load saved printer:', e);
+    console.error('[Printer] Failed to load saved printer:', e);
   }
   return null;
 };
@@ -61,42 +43,23 @@ const savePrinter = (device: BluetoothDevice | null) => {
     if (device) localStorage.setItem(STORAGE_KEY, JSON.stringify(device));
     else localStorage.removeItem(STORAGE_KEY);
   } catch (e) {
-    console.error('[NativeBluetooth] Failed to save printer:', e);
+    console.error('[Printer] Failed to save printer:', e);
   }
 };
 
-const getBluetoothSerial = (): any => {
-  if (!isNative) return null;
-  return (window as any).bluetoothSerial || null;
-};
-
-// Some devices load Cordova plugins a bit late; retry a few times before giving up.
-const waitForBluetoothSerial = async (maxTries: number = 10): Promise<any | null> => {
-  for (let i = 0; i < maxTries; i++) {
-    const bt = getBluetoothSerial();
-    if (bt) return bt;
-    await sleep(250);
+// Load the Capacitor Thermal Printer plugin
+const loadPlugin = async (): Promise<any> => {
+  if (CapacitorThermalPrinter) return CapacitorThermalPrinter;
+  
+  try {
+    const module = await import('capacitor-thermal-printer');
+    CapacitorThermalPrinter = module.CapacitorThermalPrinter;
+    console.log('[Printer] Plugin loaded successfully');
+    return CapacitorThermalPrinter;
+  } catch (e) {
+    console.error('[Printer] Failed to load plugin:', e);
+    return null;
   }
-  return null;
-};
-
-const withTimeout = <T,>(p: Promise<T>, ms: number, message: string): Promise<T> => {
-  let t: any;
-  const timeout = new Promise<T>((_, reject) => {
-    t = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
-};
-
-const toBinaryString = (bytes: number[]) => {
-  // Avoid call stack limits by chunking
-  const chunkSize = 1024;
-  let out = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.slice(i, i + chunkSize);
-    out += String.fromCharCode(...chunk);
-  }
-  return out;
 };
 
 export function useNativeBluetoothPrinter() {
@@ -109,31 +72,39 @@ export function useNativeBluetoothPrinter() {
       connectedDevice: savedPrinter,
       devices: [],
       isScanning: false,
-      // IMPORTANT: string mode is the most stable across Android devices/printers
-      dataMode: 'string' as const,
       paperSize: '58mm' as const,
     };
   });
 
   const [isSupported, setIsSupported] = useState(false);
 
+  // Initialize plugin on mount
   useEffect(() => {
-    const checkSupport = async () => {
-      if (!isNative) return;
-      const bt = await waitForBluetoothSerial();
-      if (bt) {
+    if (!isNative) return;
+
+    const init = async () => {
+      const plugin = await loadPlugin();
+      if (plugin) {
         setIsSupported(true);
-        console.log('[NativeBluetooth] BluetoothSerial plugin available');
+        
+        // Listen for discovered devices
+        plugin.addListener('discoverDevices', (result: { devices: any[] }) => {
+          console.log('[Printer] Discovered devices:', result.devices);
+          const mapped = (result.devices || []).map((d: any) => ({
+            name: d.name || 'Unknown Device',
+            address: d.address || d.macAddress || '',
+            id: d.address || d.macAddress || '',
+          })).filter((d: BluetoothDevice) => d.address);
+          
+          setState(prev => ({ ...prev, devices: mapped }));
+        });
       }
     };
 
-    if (isNative) {
-      document.addEventListener('deviceready', checkSupport, false);
-      checkSupport();
-    }
+    init();
   }, []);
 
-  // Load saved printer + settings from backend
+  // Load settings from backend
   useEffect(() => {
     if (!isNative) return;
 
@@ -171,230 +142,108 @@ export function useNativeBluetoothPrinter() {
           savePrinter({ name, address: address.toUpperCase(), id: address.toUpperCase() });
         }
       } catch (e) {
-        console.debug('[NativeBluetooth] Failed to load settings from backend:', e);
+        console.debug('[Printer] Failed to load settings from backend:', e);
       }
     };
 
     load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const ensureEnabledAndPermitted = useCallback(async (): Promise<{ bt: any } | null> => {
-    const bt = await waitForBluetoothSerial();
-    if (!bt) {
-      toast.error('Plugin Bluetooth belum siap. Rebuild APK lalu coba lagi.');
-      return null;
-    }
-
-    // Android 12+ permissions (if the plugin exposes it)
-    if (typeof bt.requestPermission === 'function') {
-      const ok = await withTimeout(
-        new Promise<boolean>((resolve) => {
-          bt.requestPermission(
-            () => resolve(true),
-            () => resolve(false)
-          );
-        }),
-        8000,
-        'Permission timeout'
-      ).catch(() => false);
-
-      if (!ok) {
-        toast.error('Izin Bluetooth ditolak. Aktifkan izin Bluetooth & Lokasi di Pengaturan aplikasi.');
-        return null;
-      }
-    }
-
-    // Ensure Bluetooth enabled
-    if (typeof bt.isEnabled === 'function' && typeof bt.enable === 'function') {
-      const enabled = await new Promise<boolean>((resolve) => {
-        bt.isEnabled(
-          () => resolve(true),
-          () => resolve(false)
-        );
-      });
-
-      if (!enabled) {
-        const enabledNow = await withTimeout(
-          new Promise<boolean>((resolve) => {
-            bt.enable(
-              () => resolve(true),
-              () => resolve(false)
-            );
-          }),
-          12000,
-          'Enable bluetooth timeout'
-        ).catch(() => false);
-
-        if (!enabledNow) {
-          toast.error('Bluetooth tidak aktif. Aktifkan Bluetooth lalu coba lagi.');
-          return null;
-        }
-      }
-    }
-
-    return { bt };
-  }, []);
-
-  const isCurrentlyConnected = useCallback(async (bt: any): Promise<boolean> => {
-    if (!bt || typeof bt.isConnected !== 'function') return false;
-    return new Promise<boolean>((resolve) => {
-      try {
-        bt.isConnected(
-          () => resolve(true),
-          () => resolve(false)
-        );
-      } catch {
-        resolve(false);
-      }
-    });
-  }, []);
-
-  const safeDisconnect = useCallback(async (bt: any): Promise<void> => {
-    if (!bt || typeof bt.disconnect !== 'function') return;
-    await new Promise<void>((resolve) => {
-      try {
-        bt.disconnect(
-          () => resolve(),
-          () => resolve()
-        );
-      } catch {
-        resolve();
-      }
-    });
+    return () => { cancelled = true; };
   }, []);
 
   const scanDevices = useCallback(async () => {
-    setState((prev) => ({ ...prev, isScanning: true, devices: [] }));
+    setState(prev => ({ ...prev, isScanning: true, devices: [] }));
 
     try {
-      const ensured = await ensureEnabledAndPermitted();
-      if (!ensured) {
-        setState((prev) => ({ ...prev, isScanning: false }));
-        return [] as BluetoothDevice[];
+      const plugin = await loadPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer belum siap');
+        setState(prev => ({ ...prev, isScanning: false }));
+        return [];
       }
 
-      const { bt } = ensured;
-      if (typeof bt.list !== 'function') {
-        toast.error('Plugin Bluetooth tidak mendukung list perangkat.');
-        setState((prev) => ({ ...prev, isScanning: false }));
-        return [] as BluetoothDevice[];
+      // Start scanning - devices will be received via listener
+      await plugin.startScan();
+      
+      // Wait a bit for devices to be discovered
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Stop scan
+      if (plugin.stopScan) {
+        await plugin.stopScan();
       }
 
-      const normalizeDevice = (d: any): BluetoothDevice => ({
-        name: d.name || d.deviceName || d.localName || 'Unknown Device',
-        address: (d.address || d.macAddress || d.id || '').toUpperCase(),
-        id: (d.address || d.macAddress || d.id || '').toUpperCase(),
-        class: d.class || d.deviceClass,
+      setState(prev => {
+        if (prev.devices.length === 0) {
+          toast.info('Tidak ada printer ditemukan. Pastikan printer sudah di-pair & menyala.');
+        } else {
+          toast.success(`Ditemukan ${prev.devices.length} perangkat`);
+        }
+        return { ...prev, isScanning: false };
       });
 
-      const devices = await withTimeout(
-        new Promise<BluetoothDevice[]>((resolve) => {
-          bt.list(
-            (deviceList: any[]) => {
-              console.log('[NativeBluetooth] Paired list:', deviceList);
-              resolve((deviceList || []).map(normalizeDevice).filter((x) => x.address));
-            },
-            () => resolve([])
-          );
-        }),
-        10000,
-        'List perangkat timeout'
-      ).catch(() => [] as BluetoothDevice[]);
-
-      setState((prev) => ({ ...prev, devices, isScanning: false }));
-
-      if (devices.length === 0) {
-        toast.info('Tidak ada printer ditemukan. Pastikan printer sudah di-pair & izin Bluetooth/Lokasi sudah aktif.');
-      } else {
-        toast.success(`Ditemukan ${devices.length} perangkat`);
-      }
-
-      return devices;
+      return state.devices;
     } catch (e) {
-      console.error('[NativeBluetooth] Scan error:', e);
+      console.error('[Printer] Scan error:', e);
       toast.error('Gagal mencari perangkat Bluetooth');
-      setState((prev) => ({ ...prev, isScanning: false }));
-      return [] as BluetoothDevice[];
+      setState(prev => ({ ...prev, isScanning: false }));
+      return [];
     }
-  }, [ensureEnabledAndPermitted]);
+  }, [state.devices]);
 
-  const connect = useCallback(
-    async (device: BluetoothDevice) => {
-      setState((prev) => ({ ...prev, isConnecting: true }));
+  const connect = useCallback(async (device: BluetoothDevice) => {
+    setState(prev => ({ ...prev, isConnecting: true }));
 
-      const ensured = await ensureEnabledAndPermitted();
-      if (!ensured) {
-        setState((prev) => ({ ...prev, isConnecting: false }));
+    try {
+      const plugin = await loadPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer belum siap');
+        setState(prev => ({ ...prev, isConnecting: false }));
         return false;
       }
 
-      const { bt } = ensured;
-
-      try {
-        // If already connected, disconnect first (avoids native crashes on some devices)
-        const already = await isCurrentlyConnected(bt);
-        if (already) {
-          await safeDisconnect(bt);
-          await sleep(400);
-        }
-
-        const ok = await withTimeout(
-          new Promise<boolean>((resolve) => {
-            bt.connect(
-              device.address,
-              () => resolve(true),
-              () => resolve(false)
-            );
-          }),
-          12000,
-          'Koneksi timeout'
-        ).catch(() => false);
-
-        if (!ok) {
-          toast.error('Gagal terhubung. Pastikan printer menyala & dekat.');
-          setState((prev) => ({ ...prev, isConnecting: false }));
-          return false;
-        }
-
-        // Save for next time
-        savePrinter(device);
-
-        setState((prev) => ({
-          ...prev,
-          isConnected: true,
-          isConnecting: false,
-          connectedDevice: device,
-        }));
-
-        toast.success(`Terhubung ke ${device.name}`);
-        return true;
-      } catch (e) {
-        console.error('[NativeBluetooth] Connect error:', e);
-        toast.error('Gagal terhubung ke printer');
-        setState((prev) => ({ ...prev, isConnecting: false }));
+      console.log('[Printer] Connecting to:', device.address);
+      
+      const result = await plugin.connect({ address: device.address });
+      
+      if (result === null) {
+        toast.error('Gagal terhubung. Pastikan printer menyala & dekat.');
+        setState(prev => ({ ...prev, isConnecting: false }));
         return false;
       }
-    },
-    [ensureEnabledAndPermitted, isCurrentlyConnected, safeDisconnect]
-  );
+
+      // Save for next time
+      savePrinter(device);
+
+      setState(prev => ({
+        ...prev,
+        isConnected: true,
+        isConnecting: false,
+        connectedDevice: device,
+      }));
+
+      toast.success(`Terhubung ke ${device.name}`);
+      return true;
+    } catch (e) {
+      console.error('[Printer] Connect error:', e);
+      toast.error('Gagal terhubung ke printer');
+      setState(prev => ({ ...prev, isConnecting: false }));
+      return false;
+    }
+  }, []);
 
   const disconnect = useCallback(async () => {
-    const bt = await waitForBluetoothSerial();
-    if (bt) {
-      await safeDisconnect(bt);
+    try {
+      const plugin = await loadPlugin();
+      if (plugin && plugin.disconnect) {
+        await plugin.disconnect();
+      }
+    } catch (e) {
+      console.error('[Printer] Disconnect error:', e);
     }
 
     savePrinter(null);
-    setState((prev) => ({ ...prev, isConnected: false, connectedDevice: null }));
+    setState(prev => ({ ...prev, isConnected: false, connectedDevice: null }));
     toast.info('Printer terputus');
-  }, [safeDisconnect]);
-
-  const textToBytes = useCallback((text: string): number[] => {
-    const encoder = new TextEncoder();
-    return Array.from(encoder.encode(text));
   }, []);
 
   const formatPrice = (price: number): string => {
@@ -422,9 +271,11 @@ export function useNativeBluetoothPrinter() {
       receivedAmount?: number,
       changeAmount?: number
     ) => {
-      const ensured = await ensureEnabledAndPermitted();
-      if (!ensured) return false;
-      const { bt } = ensured;
+      const plugin = await loadPlugin();
+      if (!plugin) {
+        toast.error('Plugin printer belum siap');
+        return false;
+      }
 
       const savedPrinter = state.connectedDevice || getSavedPrinter();
       if (!savedPrinter) {
@@ -432,149 +283,116 @@ export function useNativeBluetoothPrinter() {
         return false;
       }
 
-      setState((prev) => ({ ...prev, isPrinting: true }));
+      setState(prev => ({ ...prev, isPrinting: true }));
 
       try {
-        const already = await isCurrentlyConnected(bt);
-        if (!already) {
-          const ok = await withTimeout(
-            new Promise<boolean>((resolve) => {
-              bt.connect(
-                savedPrinter.address,
-                () => resolve(true),
-                () => resolve(false)
-              );
-            }),
-            12000,
-            'Koneksi printer timeout'
-          ).catch(() => false);
-
-          if (!ok) throw new Error('Gagal terhubung ke printer');
-          await sleep(450);
+        // Try to connect if not connected
+        const connectResult = await plugin.connect({ address: savedPrinter.address });
+        if (connectResult === null) {
+          throw new Error('Gagal terhubung ke printer');
         }
 
-        const data: number[] = [];
-        const LINE = '\n';
+        // Build the receipt
         const lineWidth = getLineWidth();
         const SEPARATOR = '-'.repeat(lineWidth);
 
-        data.push(...COMMANDS.INIT);
+        const paymentLabels: Record<string, string> = {
+          cash: 'Tunai',
+          qris: 'QRIS',
+          transfer: 'Transfer',
+          card: 'Kartu',
+          ewallet: 'E-Wallet',
+        };
 
-        data.push(...COMMANDS.ALIGN_CENTER);
-        data.push(...COMMANDS.BOLD_ON);
-        data.push(...COMMANDS.DOUBLE_HEIGHT);
-        data.push(...textToBytes('RM MINANG MAIMBAOE' + LINE));
+        // Start building receipt using fluent API
+        let builder = plugin.begin()
+          .align('center')
+          .bold()
+          .doubleHeight()
+          .text('RM MINANG MAIMBAOE\n')
+          .clearFormatting()
+          .align('center')
+          .text('Jln. Gatot Subroto no 10\n')
+          .text('depan balai desa Losari Kidul\n')
+          .text('Kec Losari Kab Cirebon\n')
+          .text(SEPARATOR + '\n')
+          .align('left')
+          .text(padText('No. Order:', '#' + order.id.slice(-6).toUpperCase()) + '\n')
+          .text(padText('Tanggal:', format(new Date(order.created_at), 'dd/MM/yy HH:mm', { locale: id })) + '\n');
 
-        data.push(...COMMANDS.NORMAL_SIZE);
-        data.push(...COMMANDS.BOLD_OFF);
-        data.push(...textToBytes('Jln. Gatot Subroto no 10' + LINE));
-        data.push(...textToBytes('depan balai desa Losari Kidul' + LINE));
-        data.push(...textToBytes('Kec Losari Kab Cirebon' + LINE));
-        data.push(...textToBytes(SEPARATOR + LINE));
-
-        data.push(...COMMANDS.ALIGN_LEFT);
-        data.push(...textToBytes(padText('No. Order:', '#' + order.id.slice(-6).toUpperCase()) + LINE));
-        data.push(
-          ...textToBytes(
-            padText('Tanggal:', format(new Date(order.created_at), 'dd/MM/yy HH:mm', { locale: id })) + LINE
-          )
-        );
-
-        if (order.customer_name) data.push(...textToBytes(padText('Pelanggan:', order.customer_name) + LINE));
-        if (tableName) data.push(...textToBytes(padText('Meja:', tableName) + LINE));
-
+        if (order.customer_name) {
+          builder = builder.text(padText('Pelanggan:', order.customer_name) + '\n');
+        }
+        if (tableName) {
+          builder = builder.text(padText('Meja:', tableName) + '\n');
+        }
         if (order.payment_method) {
-          const paymentLabels: Record<string, string> = {
-            cash: 'Tunai',
-            qris: 'QRIS',
-            transfer: 'Transfer',
-            card: 'Kartu',
-            ewallet: 'E-Wallet',
-          };
-          data.push(...textToBytes(padText('Pembayaran:', paymentLabels[order.payment_method] || order.payment_method) + LINE));
+          builder = builder.text(padText('Pembayaran:', paymentLabels[order.payment_method] || order.payment_method) + '\n');
+        }
+        if (cashierName) {
+          builder = builder.text(padText('Kasir:', cashierName) + '\n');
         }
 
-        if (cashierName) data.push(...textToBytes(padText('Kasir:', cashierName) + LINE));
-        data.push(...textToBytes(SEPARATOR + LINE));
+        builder = builder
+          .text(SEPARATOR + '\n')
+          .bold()
+          .text('PESANAN:\n')
+          .clearFormatting();
 
-        data.push(...COMMANDS.BOLD_ON);
-        data.push(...textToBytes(padText('Item', 'Qty   Harga') + LINE));
-        data.push(...COMMANDS.BOLD_OFF);
-
+        // Items
         for (const item of items) {
-          const itemTotal = formatPrice(item.price * item.quantity);
-          data.push(...textToBytes(item.name + LINE));
-          data.push(...textToBytes(padText(`  ${formatPrice(item.price)} x ${item.quantity}`, itemTotal) + LINE));
-          if (item.notes) data.push(...textToBytes(`  Catatan: ${item.notes}` + LINE));
-        }
-
-        data.push(...textToBytes(SEPARATOR + LINE));
-        data.push(...COMMANDS.BOLD_ON);
-        data.push(...COMMANDS.DOUBLE_HEIGHT);
-        data.push(...textToBytes(padText('TOTAL:', formatPrice(order.total)) + LINE));
-        data.push(...COMMANDS.NORMAL_SIZE);
-        data.push(...COMMANDS.BOLD_OFF);
-
-        if (receivedAmount && receivedAmount > 0) {
-          data.push(...textToBytes(padText('Tunai:', formatPrice(receivedAmount)) + LINE));
-          if (changeAmount && changeAmount > 0) {
-            data.push(...COMMANDS.BOLD_ON);
-            data.push(...textToBytes(padText('Kembalian:', formatPrice(changeAmount)) + LINE));
-            data.push(...COMMANDS.BOLD_OFF);
+          const itemLine = `${item.quantity}x ${item.name}`;
+          const priceStr = formatPrice(item.price * item.quantity);
+          builder = builder.text(padText(itemLine, priceStr) + '\n');
+          
+          if (item.notes) {
+            builder = builder.text(`   > ${item.notes}\n`);
           }
         }
 
-        if (order.notes) {
-          data.push(...textToBytes(SEPARATOR + LINE));
-          data.push(...textToBytes(`Catatan: ${order.notes}` + LINE));
+        builder = builder.text(SEPARATOR + '\n');
+
+        // Totals
+        builder = builder
+          .text(padText('Subtotal:', formatPrice(order.subtotal)) + '\n')
+          .text(padText('Pajak:', formatPrice(order.tax)) + '\n')
+          .bold()
+          .text(padText('TOTAL:', formatPrice(order.total)) + '\n')
+          .clearFormatting();
+
+        if (receivedAmount !== undefined && receivedAmount > 0) {
+          builder = builder
+            .text(SEPARATOR + '\n')
+            .text(padText('Dibayar:', formatPrice(receivedAmount)) + '\n');
+          
+          if (changeAmount !== undefined && changeAmount > 0) {
+            builder = builder.text(padText('Kembali:', formatPrice(changeAmount)) + '\n');
+          }
         }
 
-        data.push(...textToBytes(SEPARATOR + LINE));
-        data.push(...COMMANDS.ALIGN_CENTER);
-        data.push(...textToBytes('Terima kasih!' + LINE));
-        data.push(...textToBytes('Simpan struk ini' + LINE));
-        data.push(...textToBytes('sebagai bukti pembayaran' + LINE));
+        // Footer
+        builder = builder
+          .text('\n')
+          .align('center')
+          .text('Terima Kasih\n')
+          .text('Atas Kunjungan Anda\n')
+          .text('\n\n\n')
+          .cutPaper();
 
-        data.push(...COMMANDS.FEED_LINE);
-        data.push(...COMMANDS.FEED_LINE);
-        data.push(...COMMANDS.CUT_PAPER);
+        // Send to printer
+        await builder.write();
 
-        const payload = toBinaryString(data);
-
-        const writeOk = await withTimeout(
-          new Promise<boolean>((resolve) => {
-            bt.write(
-              payload,
-              () => resolve(true),
-              () => resolve(false)
-            );
-          }),
-          8000,
-          'Write timeout'
-        ).catch(() => false);
-
-        if (!writeOk) throw new Error('Gagal mengirim data ke printer');
-
+        setState(prev => ({ ...prev, isPrinting: false }));
         toast.success('Struk berhasil dicetak!');
-        setState((prev) => ({ ...prev, isPrinting: false }));
-
-        // Disconnect after a short delay (more stable)
-        await sleep(300);
-        await safeDisconnect(bt);
-        setState((prev) => ({ ...prev, isConnected: false }));
-
         return true;
-      } catch (e: any) {
-        console.error('[NativeBluetooth] Print error:', e);
-        toast.error(`Gagal mencetak: ${e?.message || 'Unknown error'}`);
-        setState((prev) => ({ ...prev, isPrinting: false }));
-
-        // Best effort disconnect
-        await safeDisconnect(bt);
+      } catch (e) {
+        console.error('[Printer] Print error:', e);
+        toast.error('Gagal mencetak: ' + (e instanceof Error ? e.message : 'Unknown error'));
+        setState(prev => ({ ...prev, isPrinting: false }));
         return false;
       }
     },
-    [ensureEnabledAndPermitted, getLineWidth, isCurrentlyConnected, padText, safeDisconnect, state.connectedDevice, textToBytes]
+    [state.connectedDevice, getLineWidth, padText]
   );
 
   return {
