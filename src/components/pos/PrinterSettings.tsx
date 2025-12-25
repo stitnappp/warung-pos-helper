@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
-import { Printer, RefreshCw, Loader2, Save, Bluetooth, Check, AlertCircle } from 'lucide-react';
+import { Printer, RefreshCw, Loader2, Bluetooth, Check, AlertCircle, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface BluetoothDevice {
   name: string;
@@ -23,6 +25,8 @@ export function PrinterSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+  const [manualAddress, setManualAddress] = useState('');
 
   useEffect(() => {
     setIsNative(Capacitor.isNativePlatform());
@@ -135,6 +139,57 @@ export function PrinterSettings() {
     } finally {
       setConnecting(false);
       setSelectedDevice(null);
+    }
+  };
+
+  const connectManualPrinter = async () => {
+    const cleanedAddress = manualAddress.trim().toUpperCase();
+    
+    // Validate MAC address format
+    const macRegex = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/;
+    if (!macRegex.test(cleanedAddress)) {
+      toast.error('Format MAC Address tidak valid. Contoh: 00:11:22:33:44:55');
+      return;
+    }
+
+    setConnecting(true);
+
+    try {
+      if (isNative) {
+        const { registerPlugin } = await import('@capacitor/core');
+        const BluetoothSerial = registerPlugin<any>('BluetoothSerial');
+
+        if (BluetoothSerial) {
+          // Try to connect
+          await BluetoothSerial.connect({ address: cleanedAddress });
+          toast.success('Berhasil terhubung ke printer');
+          await BluetoothSerial.disconnect();
+        }
+      }
+
+      // Save the printer
+      const device: BluetoothDevice = {
+        name: 'Printer Manual',
+        address: cleanedAddress,
+        id: cleanedAddress,
+      };
+      await savePrinter(device);
+      setManualAddress('');
+      setShowManual(false);
+    } catch (error) {
+      console.error('Error connecting to manual printer:', error);
+      // Still save even if connection fails (user might be in web mode or printer is off)
+      const device: BluetoothDevice = {
+        name: 'Printer Manual',
+        address: cleanedAddress,
+        id: cleanedAddress,
+      };
+      await savePrinter(device);
+      setManualAddress('');
+      setShowManual(false);
+      toast.info('MAC Address disimpan. Printer akan terhubung saat mencetak.');
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -271,6 +326,48 @@ export function PrinterSettings() {
           {scanning ? 'Mencari Printer...' : 'Cari Printer Bluetooth'}
         </Button>
 
+        {/* Manual MAC Address Input */}
+        <Collapsible open={showManual} onOpenChange={setShowManual}>
+          <CollapsibleTrigger asChild>
+            <Button variant="link" className="w-full text-primary">
+              <Link2 className="h-4 w-4 mr-2" />
+              {showManual ? 'Sembunyikan' : 'Koneksi Manual'}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 mt-4">
+            <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-3">
+              <p className="text-muted-foreground">
+                Masukkan MAC Address printer RPP02N Anda.
+                Lihat di Pengaturan Bluetooth HP → Pilih RPP02N → Lihat detail.
+              </p>
+              <div className="bg-muted rounded-lg p-3 font-mono text-sm">
+                Contoh: 00:11:22:33:44:55
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="00:11:22:33:44:55"
+                  value={manualAddress}
+                  onChange={(e) => setManualAddress(e.target.value.toUpperCase())}
+                  className="font-mono"
+                />
+              </div>
+              <Button
+                onClick={connectManualPrinter}
+                disabled={connecting || !manualAddress.trim()}
+                className="w-full"
+                variant="secondary"
+              >
+                {connecting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Bluetooth className="h-4 w-4 mr-2" />
+                )}
+                Hubungkan Printer
+              </Button>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
         {!isNative && (
           <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 text-sm">
             <div className="flex items-start gap-2">
@@ -279,7 +376,7 @@ export function PrinterSettings() {
                 <p className="font-medium text-yellow-600 dark:text-yellow-400">Mode Web</p>
                 <p className="text-muted-foreground mt-1">
                   Fitur scan printer otomatis hanya tersedia di aplikasi Android.
-                  Silahkan buka aplikasi ini di Android untuk menggunakan fitur ini.
+                  Gunakan "Koneksi Manual" untuk menyimpan MAC Address printer.
                 </p>
               </div>
             </div>
@@ -325,14 +422,14 @@ export function PrinterSettings() {
 
         {/* Instructions */}
         <div className="rounded-lg bg-muted/50 p-4 text-sm space-y-3">
-          <p className="font-medium">Cara Menghubungkan Printer Thermal:</p>
+          <p className="font-medium">Cara Menghubungkan Printer RPP02N/Eppos:</p>
           <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
             <li>Nyalakan printer dan aktifkan Bluetooth di HP</li>
             <li>Buka Pengaturan → Bluetooth di HP</li>
-            <li>Pair/Sambungkan dengan printer (biasanya bernama "RPP02N", "BlueTooth Printer", dll)</li>
+            <li>Pair/Sambungkan dengan printer "RPP02N"</li>
             <li>Kembali ke aplikasi ini</li>
-            <li>Tekan "Cari Printer Bluetooth"</li>
-            <li>Pilih printer dari daftar dan tekan "Hubungkan"</li>
+            <li>Tekan "Cari Printer Bluetooth" atau gunakan "Koneksi Manual"</li>
+            <li>Untuk koneksi manual: Lihat MAC Address di detail perangkat Bluetooth HP</li>
           </ol>
         </div>
 
