@@ -17,7 +17,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { format, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth, subMonths, parseISO } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { 
   TrendingUp, 
@@ -75,7 +75,7 @@ export function SalesReport() {
 
   const chartData = data?.dailyData.map(d => ({
     ...d,
-    displayDate: format(new Date(d.date), 'dd MMM', { locale: id }),
+    displayDate: format(parseISO(d.date), 'dd MMM', { locale: id }),
   })) || [];
 
   const pieData = data?.summary.topItems.map(item => ({
