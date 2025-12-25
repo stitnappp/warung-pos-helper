@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useIsAdmin } from '@/hooks/useUserRole';
 import { 
   useMenuItems, 
   useMenuCategories, 
@@ -33,6 +34,7 @@ import { MidtransSettings } from '@/components/pos/MidtransSettings';
 
 export default function Admin() {
   const { user, loading: authLoading } = useAuth();
+  const { isAdmin, isLoading: roleLoading } = useIsAdmin();
   const { data: menuItems = [], isLoading: itemsLoading } = useMenuItems();
   const { data: categories = [], isLoading: categoriesLoading } = useMenuCategories();
   const { data: tables = [], isLoading: tablesLoading } = useTables();
@@ -49,7 +51,7 @@ export default function Admin() {
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
 
-  if (authLoading) {
+  if (authLoading || roleLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -59,6 +61,11 @@ export default function Admin() {
 
   if (!user) {
     return <Navigate to="/auth" replace />;
+  }
+
+  if (!isAdmin) {
+    toast.error('Akses ditolak. Halaman ini hanya untuk admin.');
+    return <Navigate to="/" replace />;
   }
 
   const isLoading = itemsLoading || categoriesLoading || tablesLoading;
