@@ -40,10 +40,11 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
   
   const cashierName = currentUserProfile?.full_name || undefined;
 
-  const handleShareReceipt = async () => {
-    if (!order || !receiptRef.current) return;
-    
-    setIsProcessing(true);
+  // Detect if running in Capacitor (Android)
+  const isCapacitor = typeof (window as any).Capacitor !== 'undefined';
+
+  const generateReceiptImage = async (): Promise<Blob | null> => {
+    if (!receiptRef.current) return null;
     
     try {
       const html2canvasModule = await import('html2canvas');
@@ -52,9 +53,23 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
         scale: 2,
       });
       
-      const dataUrl = canvas.toDataURL('image/png');
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), 'image/png');
+      });
+    } catch (error) {
+      console.error('Error generating receipt image:', error);
+      return null;
+    }
+  };
+
+  const handleShareReceipt = async () => {
+    if (!order || !receiptRef.current) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const blob = await generateReceiptImage();
+      if (!blob) throw new Error('Failed to generate image');
       
       const fileName = 'struk-' + order.id.slice(-6).toUpperCase() + '.png';
       const file = new File([blob], fileName, { type: 'image/png' });
@@ -68,10 +83,16 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
         if (onCompleteOrder) onCompleteOrder(order.id);
         toast.success('Struk berhasil dibagikan!');
       } else {
+        // Fallback to download
+        const dataUrl = URL.createObjectURL(blob);
         downloadImage(dataUrl, fileName);
+        URL.revokeObjectURL(dataUrl);
       }
     } catch (error) {
       console.error('Share error:', error);
+      if ((error as Error).name !== 'AbortError') {
+        toast.error('Gagal membagikan struk');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -248,58 +269,69 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
             </Button>
           ) : (
             <>
-              {canShare ? (
-                <Button 
-                  onClick={handleShareReceipt} 
-                  disabled={isLoading || isProcessing}
-                  className="gradient-primary w-full"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Share2 className="h-4 w-4 mr-2" />
+              {/* Primary action - Share (works on both web and Android) */}
+              <Button 
+                onClick={handleShareReceipt} 
+                disabled={isLoading || isProcessing}
+                className="gradient-primary w-full"
+              >
+                {isProcessing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Share2 className="h-4 w-4 mr-2" />
+                )}
+                {isCapacitor ? 'Bagikan ke Printer / Aplikasi' : 'Bagikan / Cetak'}
+              </Button>
+
+              {/* Download option */}
+              <Button 
+                onClick={handleDownloadReceipt} 
+                disabled={isLoading || isProcessing}
+                variant="secondary"
+                className="w-full"
+              >
+                {isProcessing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Unduh Gambar Struk
+              </Button>
+
+              {/* Browser print and Bluetooth - hide on Capacitor since they don't work well */}
+              {!isCapacitor && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button onClick={handleBrowserPrint} disabled={isLoading} variant="outline">
+                    <Printer className="h-4 w-4 mr-2" />
+                    Cetak Browser
+                  </Button>
+
+                  {bluetooth.isSupported && (
+                    <Button 
+                      onClick={handleBluetoothPrint} 
+                      disabled={isLoading || bluetooth.isPrinting || bluetooth.isConnecting} 
+                      variant="outline"
+                      className={cn(
+                        bluetooth.isConnected && "ring-2 ring-accent ring-offset-1"
+                      )}
+                    >
+                      {bluetooth.isPrinting || bluetooth.isConnecting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Bluetooth className="h-4 w-4 mr-2" />
+                      )}
+                      Thermal
+                    </Button>
                   )}
-                  Bagikan / Cetak
-                </Button>
-              ) : (
-                <Button 
-                  onClick={handleDownloadReceipt} 
-                  disabled={isLoading || isProcessing}
-                  className="gradient-primary w-full"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  Unduh Gambar Struk
-                </Button>
+                </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2">
-                <Button onClick={handleBrowserPrint} disabled={isLoading} variant="secondary">
-                  <Printer className="h-4 w-4 mr-2" />
-                  Cetak Browser
-                </Button>
-
-                {bluetooth.isSupported && (
-                  <Button 
-                    onClick={handleBluetoothPrint} 
-                    disabled={isLoading || bluetooth.isPrinting || bluetooth.isConnecting} 
-                    variant="secondary"
-                    className={cn(
-                      bluetooth.isConnected && "ring-2 ring-accent ring-offset-1"
-                    )}
-                  >
-                    {bluetooth.isPrinting || bluetooth.isConnecting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Bluetooth className="h-4 w-4 mr-2" />
-                    )}
-                    Thermal
-                  </Button>
-                )}
-              </div>
+              {/* Help text for Android users */}
+              {isCapacitor && (
+                <p className="text-xs text-muted-foreground text-center">
+                  Tekan "Bagikan" lalu pilih aplikasi printer Bluetooth Anda
+                </p>
+              )}
               
               <Button variant="ghost" onClick={handleClose} className="w-full">
                 <X className="h-4 w-4 mr-2" />
