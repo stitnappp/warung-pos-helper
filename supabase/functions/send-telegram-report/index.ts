@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -6,13 +7,16 @@ const corsHeaders = {
 };
 
 interface ReportData {
-  type: 'daily' | 'monthly';
+  type: 'daily' | 'weekly' | 'monthly';
   date: string;
   totalOrders: number;
   totalRevenue: number;
   completedOrders: number;
   pendingOrders: number;
   cancelledOrders: number;
+  cashTotal?: number;
+  transferTotal?: number;
+  qrisTotal?: number;
   topItems?: { name: string; quantity: number; revenue: number }[];
   generatedBy?: string;
 }
@@ -25,11 +29,38 @@ serve(async (req) => {
 
   try {
     const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN');
-    const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-      console.error('[Telegram Report] Missing bot token or chat ID');
-      throw new Error('Telegram configuration is missing');
+    if (!TELEGRAM_BOT_TOKEN) {
+      console.error('[Telegram Report] Missing bot token');
+      throw new Error('Telegram bot token is missing');
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[Telegram Report] Missing Supabase credentials');
+      throw new Error('Supabase configuration is missing');
+    }
+
+    // Get chat ID from database
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const { data: settingData, error: settingError } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'telegram_chat_id')
+      .maybeSingle();
+
+    if (settingError) {
+      console.error('[Telegram Report] Error fetching chat ID from database:', settingError);
+      throw new Error('Failed to fetch Telegram chat ID');
+    }
+
+    // Fallback to env variable if database value is empty
+    const TELEGRAM_CHAT_ID = settingData?.value || Deno.env.get('TELEGRAM_CHAT_ID');
+
+    if (!TELEGRAM_CHAT_ID) {
+      console.error('[Telegram Report] Chat ID not configured');
+      throw new Error('Telegram Chat ID is not configured. Please set it in Admin settings.');
     }
 
     const { report } = await req.json() as { report: ReportData };
@@ -45,7 +76,13 @@ serve(async (req) => {
     };
 
     // Build message
-    const reportTypeLabel = report.type === 'daily' ? 'HARIAN' : 'BULANAN';
+    const reportTypeLabels: Record<string, string> = {
+      daily: 'HARIAN',
+      weekly: 'MINGGUAN',
+      monthly: 'BULANAN',
+    };
+    const reportTypeLabel = reportTypeLabels[report.type] || 'HARIAN';
+    
     let message = `📊 *LAPORAN ${reportTypeLabel}*\n`;
     message += `━━━━━━━━━━━━━━━━━━\n\n`;
     message += `📅 *Periode:* ${report.date}\n\n`;
@@ -58,6 +95,14 @@ serve(async (req) => {
     
     message += `💰 *TOTAL PENDAPATAN*\n`;
     message += `${formatPrice(report.totalRevenue)}\n\n`;
+
+    // Add payment method breakdown if available
+    if (report.cashTotal !== undefined || report.transferTotal !== undefined || report.qrisTotal !== undefined) {
+      message += `💳 *METODE PEMBAYARAN*\n`;
+      message += `├ 💵 Tunai: ${formatPrice(report.cashTotal || 0)}\n`;
+      message += `├ 🏦 Transfer: ${formatPrice(report.transferTotal || 0)}\n`;
+      message += `└ 📱 QRIS: ${formatPrice(report.qrisTotal || 0)}\n\n`;
+    }
 
     if (report.topItems && report.topItems.length > 0) {
       message += `🏆 *TOP MENU*\n`;
