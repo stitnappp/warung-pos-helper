@@ -21,16 +21,22 @@ interface BluetoothDevice {
 
 // Dynamic import for capacitor-thermal-printer (more stable than cordova plugin)
 let ThermalPrinterPlugin: any = null;
+let ThermalPrinterLoadError: string | null = null;
+
+const getThermalPrinterLoadError = () => ThermalPrinterLoadError;
 
 const loadThermalPrinterPlugin = async (): Promise<any> => {
   if (ThermalPrinterPlugin) return ThermalPrinterPlugin;
-  
+
   try {
     const module = await import('capacitor-thermal-printer');
     ThermalPrinterPlugin = module.CapacitorThermalPrinter;
+    ThermalPrinterLoadError = null;
     console.log('[Printer] Capacitor Thermal Printer plugin loaded');
     return ThermalPrinterPlugin;
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ThermalPrinterLoadError = msg;
     console.error('[Printer] Failed to load thermal printer plugin:', e);
     return null;
   }
@@ -125,8 +131,12 @@ const connectToPrinterAddress = async (address: string): Promise<{ name: string;
 
 interface DiagnosticInfo {
   isNativePlatform: boolean;
+  platform: string;
+  capacitorAvailable: boolean;
+  pluginAvailable: boolean;
   pluginLoaded: boolean;
   pluginName: string | null;
+  pluginLoadError: string | null;
   bluetoothSerialAvailable: boolean;
   lastAction: string;
   lastError: string | null;
@@ -152,8 +162,12 @@ export function PrinterSettings() {
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [diagnostic, setDiagnostic] = useState<DiagnosticInfo>({
     isNativePlatform: false,
+    platform: 'web',
+    capacitorAvailable: false,
+    pluginAvailable: false,
     pluginLoaded: false,
     pluginName: null,
+    pluginLoadError: null,
     bluetoothSerialAvailable: false,
     lastAction: 'Belum ada aksi',
     lastError: null,
@@ -261,13 +275,24 @@ export function PrinterSettings() {
 
     // Run initial diagnostic
     const runDiagnostic = async () => {
+      const platform = typeof Capacitor.getPlatform === 'function' ? Capacitor.getPlatform() : 'unknown';
+      const capacitorAvailable = !!(window as any).Capacitor;
+      const pluginAvailable =
+        typeof (Capacitor as any).isPluginAvailable === 'function'
+          ? (Capacitor as any).isPluginAvailable('CapacitorThermalPrinter')
+          : false;
+
       const btSerial = getBluetoothSerial();
       const plugin = await loadThermalPrinterPlugin();
-      
+
       updateDiagnostic({
         isNativePlatform,
+        platform,
+        capacitorAvailable,
+        pluginAvailable,
         pluginLoaded: !!plugin,
         pluginName: plugin ? 'capacitor-thermal-printer' : null,
+        pluginLoadError: getThermalPrinterLoadError(),
         bluetoothSerialAvailable: !!btSerial,
         lastAction: 'Inisialisasi selesai',
         lastError: null,
@@ -633,13 +658,29 @@ export function PrinterSettings() {
             <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-2 font-mono">
               <div className="grid grid-cols-2 gap-1">
                 <span className="text-muted-foreground">Native Platform:</span>
-                <span className={diagnostic.isNativePlatform ? 'text-green-500' : 'text-red-500'}>
+                <span className={diagnostic.isNativePlatform ? 'text-primary' : 'text-destructive'}>
                   {diagnostic.isNativePlatform ? '✓ Ya (APK)' : '✗ Tidak (Web)'}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">Platform:</span>
+                <span>{diagnostic.platform}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">window.Capacitor:</span>
+                <span className={diagnostic.capacitorAvailable ? 'text-primary' : 'text-destructive'}>
+                  {diagnostic.capacitorAvailable ? '✓ Ada' : '✗ Tidak Ada'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-muted-foreground">Plugin Available:</span>
+                <span className={diagnostic.pluginAvailable ? 'text-primary' : 'text-muted-foreground'}>
+                  {diagnostic.pluginAvailable ? '✓ Ya' : '○ Tidak Terdeteksi'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
                 <span className="text-muted-foreground">Plugin Loaded:</span>
-                <span className={diagnostic.pluginLoaded ? 'text-green-500' : 'text-red-500'}>
+                <span className={diagnostic.pluginLoaded ? 'text-primary' : 'text-destructive'}>
                   {diagnostic.pluginLoaded ? '✓ Ya' : '✗ Tidak'}
                 </span>
               </div>
@@ -647,9 +688,15 @@ export function PrinterSettings() {
                 <span className="text-muted-foreground">Plugin:</span>
                 <span>{diagnostic.pluginName || '-'}</span>
               </div>
+              {diagnostic.pluginLoadError && !diagnostic.pluginLoaded && (
+                <div className="grid grid-cols-2 gap-1">
+                  <span className="text-muted-foreground">Load Error:</span>
+                  <span className="text-destructive break-all">{diagnostic.pluginLoadError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-1">
                 <span className="text-muted-foreground">BluetoothSerial:</span>
-                <span className={diagnostic.bluetoothSerialAvailable ? 'text-green-500' : 'text-yellow-500'}>
+                <span className={diagnostic.bluetoothSerialAvailable ? 'text-primary' : 'text-muted-foreground'}>
                   {diagnostic.bluetoothSerialAvailable ? '✓ Ada' : '○ Tidak Ada'}
                 </span>
               </div>
@@ -659,8 +706,8 @@ export function PrinterSettings() {
               </div>
               {diagnostic.lastError && (
                 <div className="border-t pt-2 mt-2">
-                  <p className="text-red-400 mb-1">Error:</p>
-                  <p className="text-red-300 break-all">{diagnostic.lastError}</p>
+                  <p className="text-destructive mb-1">Error:</p>
+                  <p className="text-destructive break-all">{diagnostic.lastError}</p>
                 </div>
               )}
             </div>
@@ -783,11 +830,11 @@ export function PrinterSettings() {
         )}
 
         {!isNative && (
-          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 text-sm">
+          <div className="bg-muted/50 border border-border rounded-lg p-4 text-sm">
             <div className="flex items-start gap-2">
-              <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-yellow-600 dark:text-yellow-400">Mode Web</p>
+                <p className="font-medium text-foreground">Mode Web</p>
                 <p className="text-muted-foreground mt-1">
                   Fitur scan printer hanya tersedia di aplikasi Android.
                   Silahkan buka aplikasi Android untuk menggunakan fitur ini.
