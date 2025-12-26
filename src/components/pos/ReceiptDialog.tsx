@@ -282,10 +282,14 @@ export function ReceiptDialog({ open, onClose, order, onCompleteOrder, receivedA
         }
       }
     } else {
-      // Web Bluetooth - use new printReceipt signature
+      // Web Bluetooth
       if (!webBluetooth.isConnected) {
-        toast.info('Silakan hubungkan printer terlebih dahulu');
-        return;
+        // Try to connect first via Web Bluetooth picker
+        toast.info('Pilih printer dari dialog yang muncul...');
+        const connected = await webBluetooth.scanDevices();
+        if (!connected) {
+          return;
+        }
       }
 
       const success = await webBluetooth.printReceipt(receiptData);
