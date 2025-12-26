@@ -11,6 +11,7 @@ interface PrinterStatus {
   connectedDevice: BluetoothDevice | null;
   isScanning: boolean;
   isPrinting: boolean;
+  isConnecting: boolean;
   devices: BluetoothDevice[];
   error: string | null;
 }
@@ -23,13 +24,41 @@ const STORAGE_KEY = 'eppos_printer_device';
 // Fixed line width for 58mm thermal paper
 const LINE_WIDTH = 32;
 
+// ESC/POS commands for thermal printers
+const ESC = 0x1B;
+const GS = 0x1D;
+
+const ESC_POS = {
+  INIT: [ESC, 0x40],
+  ALIGN_CENTER: [ESC, 0x61, 0x01],
+  ALIGN_LEFT: [ESC, 0x61, 0x00],
+  ALIGN_RIGHT: [ESC, 0x61, 0x02],
+  BOLD_ON: [ESC, 0x45, 0x01],
+  BOLD_OFF: [ESC, 0x45, 0x00],
+  DOUBLE_HEIGHT_ON: [GS, 0x21, 0x10],
+  DOUBLE_HEIGHT_OFF: [GS, 0x21, 0x00],
+  CUT_PAPER: [GS, 0x56, 0x00],
+  FEED_LINE: [0x0A],
+};
+
 const sanitizeReceiptText = (text: string) => {
-  // Thermal printers are sensitive to charset/encoding; keep output strictly ASCII-ish
-  // to prevent garbled characters (e.g., Mandarin glyphs) on some devices.
   return text
     .normalize('NFKD')
     .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
 };
+
+// Web Bluetooth characteristic UUIDs for thermal printers
+const PRINTER_SERVICE_UUIDS = [
+  '000018f0-0000-1000-8000-00805f9b34fb',
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+];
+
+const PRINTER_CHARACTERISTIC_UUIDS = [
+  '00002af1-0000-1000-8000-00805f9b34fb',
+  '49535343-8841-43f4-a8d4-ecbe34729bb3',
+  'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f',
+];
 
 export function useBluetoothPrinter() {
   const [status, setStatus] = useState<PrinterStatus>({
@@ -37,6 +66,7 @@ export function useBluetoothPrinter() {
     connectedDevice: null,
     isScanning: false,
     isPrinting: false,
+    isConnecting: false,
     devices: [],
     error: null,
   });
@@ -44,8 +74,15 @@ export function useBluetoothPrinter() {
   const [thermalPrinter, setThermalPrinter] = useState<any>(null);
   const listenerRef = useRef<any>(null);
   const finishListenerRef = useRef<any>(null);
+  
+  // Web Bluetooth refs
+  const gattServerRef = useRef<BluetoothRemoteGATTServer | null>(null);
+  const characteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
 
-  // Load thermal printer plugin dynamically
+  // Check if Web Bluetooth is supported
+  const isWebBluetoothSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator;
+
+  // Load thermal printer plugin dynamically (native only)
   useEffect(() => {
     if (!isNative) return;
 
@@ -60,12 +97,100 @@ export function useBluetoothPrinter() {
       });
   }, []);
 
-  // Scan for Bluetooth devices using thermal printer plugin's startScan
-  const scanDevices = useCallback(async () => {
-    if (!isNative || !thermalPrinter) {
+  // Web Bluetooth: Connect to printer
+  const connectWebBluetooth = useCallback(async () => {
+    if (!isWebBluetoothSupported) {
       setStatus(prev => ({
         ...prev,
-        error: 'Fitur ini hanya tersedia di aplikasi Android'
+        error: 'Web Bluetooth tidak didukung di browser ini'
+      }));
+      return false;
+    }
+
+    try {
+      setStatus(prev => ({ ...prev, isConnecting: true, error: null }));
+
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: PRINTER_SERVICE_UUIDS.map(uuid => uuid) }],
+        optionalServices: PRINTER_SERVICE_UUIDS,
+      }).catch(() => null);
+
+      if (!device) {
+        // User cancelled
+        setStatus(prev => ({ ...prev, isConnecting: false }));
+        return false;
+      }
+
+      const server = await device.gatt?.connect();
+      if (!server) {
+        throw new Error('Gagal koneksi ke GATT server');
+      }
+
+      gattServerRef.current = server;
+
+      // Try to find the printer characteristic
+      let characteristic: BluetoothRemoteGATTCharacteristic | null = null;
+
+      for (const serviceUuid of PRINTER_SERVICE_UUIDS) {
+        try {
+          const service = await server.getPrimaryService(serviceUuid);
+          for (const charUuid of PRINTER_CHARACTERISTIC_UUIDS) {
+            try {
+              characteristic = await service.getCharacteristic(charUuid);
+              if (characteristic) break;
+            } catch {
+              continue;
+            }
+          }
+          if (characteristic) break;
+        } catch {
+          continue;
+        }
+      }
+
+      if (!characteristic) {
+        throw new Error('Karakteristik printer tidak ditemukan');
+      }
+
+      characteristicRef.current = characteristic;
+
+      const connectedDevice: BluetoothDevice = {
+        name: device.name || 'Printer',
+        address: device.id,
+      };
+
+      setStatus(prev => ({
+        ...prev,
+        isConnected: true,
+        isConnecting: false,
+        connectedDevice,
+      }));
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(connectedDevice));
+
+      return true;
+    } catch (error: any) {
+      console.error('Web Bluetooth connect error:', error);
+      setStatus(prev => ({
+        ...prev,
+        isConnecting: false,
+        error: error.message || 'Gagal koneksi ke printer'
+      }));
+      return false;
+    }
+  }, [isWebBluetoothSupported]);
+
+  // Scan for Bluetooth devices (native) or request connection (web)
+  const scanDevices = useCallback(async () => {
+    if (!isNative) {
+      // For web, we use requestDevice which shows a picker
+      return connectWebBluetooth();
+    }
+
+    if (!thermalPrinter) {
+      setStatus(prev => ({
+        ...prev,
+        error: 'Plugin printer tidak tersedia'
       }));
       return;
     }
@@ -90,9 +215,7 @@ export function useBluetoothPrinter() {
         console.log('Discovered devices:', data.devices);
 
         for (const device of data.devices) {
-          // Check if device is not already in list
           if (!foundDevices.some(d => d.address === device.address)) {
-            // Prioritize Eppos, RPP, and thermal printer devices
             const deviceName = device.name || 'Unknown Device';
             const isEppos = deviceName.toLowerCase().includes('eppos') ||
                            deviceName.toLowerCase().includes('rpp');
@@ -120,11 +243,9 @@ export function useBluetoothPrinter() {
         setStatus(prev => ({ ...prev, isScanning: false }));
       });
 
-      // Start scanning - this uses Bluetooth Classic on Android
       await thermalPrinter.startScan();
       console.log('Started scanning for printers...');
 
-      // Auto stop after 15 seconds if not finished
       setTimeout(async () => {
         try {
           await thermalPrinter.stopScan();
@@ -142,7 +263,7 @@ export function useBluetoothPrinter() {
         error: error.message || 'Gagal mencari printer. Pastikan Bluetooth aktif dan izin diberikan.'
       }));
     }
-  }, [thermalPrinter]);
+  }, [thermalPrinter, connectWebBluetooth]);
 
   // Connect to a specific printer
   const connectPrinter = useCallback(async (device: BluetoothDevice) => {
@@ -176,9 +297,26 @@ export function useBluetoothPrinter() {
     }
   }, [thermalPrinter]);
 
-  // Disconnect from printer
+  // Disconnect from printer (native or web)
   const disconnectPrinter = useCallback(async () => {
-    if (!isNative || !thermalPrinter) return;
+    // Web Bluetooth disconnect
+    if (!isNative) {
+      if (gattServerRef.current?.connected) {
+        gattServerRef.current.disconnect();
+      }
+      gattServerRef.current = null;
+      characteristicRef.current = null;
+      setStatus(prev => ({
+        ...prev,
+        isConnected: false,
+        connectedDevice: null
+      }));
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+
+    // Native disconnect
+    if (!thermalPrinter) return;
 
     try {
       await thermalPrinter.disconnect();
@@ -247,7 +385,27 @@ export function useBluetoothPrinter() {
     }
   }, [status.isConnected, thermalPrinter]);
 
-  // Print receipt
+  // Web Bluetooth print helper
+  const sendToWebPrinter = useCallback(async (data: Uint8Array): Promise<boolean> => {
+    if (!characteristicRef.current) return false;
+
+    try {
+      // Split into chunks (BLE has ~20 byte MTU typically, but we'll use 100 for efficiency)
+      const chunkSize = 100;
+      for (let i = 0; i < data.length; i += chunkSize) {
+        const chunk = data.slice(i, i + chunkSize);
+        await characteristicRef.current.writeValue(chunk);
+        // Small delay between chunks
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      return true;
+    } catch (error) {
+      console.error('Web Bluetooth write error:', error);
+      return false;
+    }
+  }, []);
+
+  // Print receipt (supports both web and native)
   const printReceipt = useCallback(async (receiptData: {
     orderNumber: string;
     cashierName: string;
@@ -270,10 +428,6 @@ export function useBluetoothPrinter() {
       footer_message: string | null;
     };
   }) => {
-    if (!isNative || !thermalPrinter) {
-      return false;
-    }
-
     if (!status.isConnected) {
       setStatus(prev => ({ ...prev, error: 'Printer belum terhubung' }));
       return false;
@@ -341,9 +495,6 @@ export function useBluetoothPrinter() {
         return 'Item'.padEnd(nameWidth, ' ') + 'Qty'.padStart(qtyWidth, ' ') + 'Harga'.padStart(priceWidth, ' ');
       };
 
-      // Print using plugin builder API (implemented on Android)
-      const printer = thermalPrinter.begin().clearFormatting();
-
       // Build receipt text
       let receiptTextRaw = '';
 
@@ -401,6 +552,29 @@ export function useBluetoothPrinter() {
 
       const receiptText = sanitizeReceiptText(receiptTextRaw);
 
+      // Web Bluetooth printing
+      if (!isNative) {
+        // Build ESC/POS command buffer
+        const encoder = new TextEncoder();
+        const textBytes = encoder.encode(receiptText);
+        
+        const commands = new Uint8Array([
+          ...ESC_POS.INIT,
+          ...ESC_POS.ALIGN_CENTER,
+          ...textBytes,
+          ...ESC_POS.FEED_LINE,
+          ...ESC_POS.FEED_LINE,
+          ...ESC_POS.CUT_PAPER,
+        ]);
+
+        const success = await sendToWebPrinter(commands);
+        setStatus(prev => ({ ...prev, isPrinting: false }));
+        return success;
+      }
+
+      // Native printing using plugin builder API
+      const printer = thermalPrinter.begin().clearFormatting();
+
       await printer
         .align('center')
         .text(receiptText)
@@ -418,7 +592,7 @@ export function useBluetoothPrinter() {
       }));
       return false;
     }
-  }, [status.isConnected, thermalPrinter]);
+  }, [status.isConnected, thermalPrinter, sendToWebPrinter]);
 
   // Try to reconnect to last printer on mount
   useEffect(() => {
@@ -440,15 +614,14 @@ export function useBluetoothPrinter() {
   }, [connectPrinter, thermalPrinter]);
 
   // Backward compatibility aliases
-  const connect = connectPrinter;
+  const connect = isNative ? connectPrinter : connectWebBluetooth;
   const disconnect = disconnectPrinter;
-  const isConnecting = false; // Not used in new implementation but needed for compatibility
 
   return {
     ...status,
     isNative,
-    isSupported: isNative, // For backward compatibility
-    isConnecting,
+    isSupported: isNative || isWebBluetoothSupported,
+    isConnecting: status.isConnecting,
     connectedDevice: status.connectedDevice,
     scanDevices,
     connectPrinter,
